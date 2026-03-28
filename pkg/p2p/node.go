@@ -3,27 +3,21 @@ package p2p
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"runtime"
-	"bytes"
-	"exec"
-	"fmt"
-	"strconv"
+	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
-	libp2plib "github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	multiaddr "github.com/multiformats/go-multiaddr"
-	"github.com/libp2p/go-libp2p-core/host"
-	corepeer "github.com/libp2p/go-libp2p-core/peer"
-	"github.com/libp2p/go-libp2p-core/protocol"
-	"github.com/libp2p/go-libp2p-relay/v2"
-	"github.com/libp2p/go-libp2p-tcp"
 )
 
 // ProtocolID is the OpenPool libp2p protocol identifier.
@@ -53,13 +47,8 @@ type LedgerDB interface {
 
 // NewNode creates a new libp2p P2P node.
 func NewNode(ledger LedgerDB) *Node {
-	idBytes := make([]byte, 8)
-	rand.Read(idBytes)
-
 	ctx, cancel := context.WithCancel(context.Background())
-
 	return &Node{
-		ID:        hex.EncodeToString(idBytes),
 		Ledger:    ledger,
 		tasks:     make(map[string]*Task),
 		taskChans: make(map[string]chan *TaskResult),
@@ -68,38 +57,14 @@ func NewNode(ledger LedgerDB) *Node {
 	}
 }
 
-// Listen starts the libp2p host with NAT traversal enabled.
+// ── Listen ────────────────────────────────────────────────────────────────────
+
+// Listen starts the libp2p host with circuit relay NAT traversal.
 func (n *Node) Listen(port int) error {
-	// Enable NAT port mapping (UPnP/NAT-PMP) — NAT traversal step 1
-	natOpt, _ := libp2plib.NATPortMap() // best effort
-
-	// Enable NAT service (relay server) — NAT traversal step 2
-	swarmOpt, err := swarm.EnableNATService()
-	if err != nil {
-		return fmt.Errorf("NAT service: %w", err)
-	}
-
-	// Enable circuit relay v2 — NAT traversal step 3 (fallback for symmetric NAT)
-	relayOpt := relayv2.EnableRelay()
-
-	// Enable TCP transport with no socket reuse (sandboxing)
-	tcpOpt := tcp.NewTCP
-
-	h, err := libp2plib.New(
-		// Transports
-		libp2plib.Transport(tcpOpt),
-
-		// NAT traversal
-		natOpt,    // UPnP/NAT-PMP port mapping
-		swarmOpt,  // Active NAT service (relay for others)
-		relayOpt,  // Circuit relay v2 (connect through relay)
-
-func (n *Node) Listen(port int) error {
-	// Circuit relay v2 — enables NAT traversal for all peers
-	relayOpt := relayv2.EnableRelay()
-	tcpOpt := tcp.NewTCP
-		relayOpt,
-		libp2plib.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", port)),
+	h, err := libp2p.New(
+		libp2p.Transport(tcp.NewTCPTransport),
+		libp2p.EnableRelay(),
+		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", port)),
 	)
 	if err != nil {
 		return fmt.Errorf("libp2p new: %w", err)
@@ -108,11 +73,33 @@ func (n *Node) Listen(port int) error {
 	n.Host = h
 	h.SetStreamHandler(protocol.ID(ProtocolID), n.handleStream)
 
+	log.Printf("[%s] libp2p ready", n.ID[:6])
+	for _, addr := range h.Addrs() {
+		log.Printf("  listen: %s/p2p/%s", addr, h.ID().String())
 	}
 
 	return nil
 }
 
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
+
+// Bootstrap connects to a list of bootstrap peers.
+// After connecting, the peerstore will have their address from the connection.
+func (n *Node) Bootstrap(peers []string) {
+	for _, addr := range peers {
+		ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+		if err := n.Connect(ctx, addr); err != nil {
+			log.Printf("[%s] bootstrap %s: %v", n.ID[:6], addr, err)
+			cancel()
+			continue
+		}
+		cancel()
+		log.Printf("[%s] connected to %s", n.ID[:6], extractPeerID(addr))
+	}
+}
+
+// Connect connects to a peer by multiaddr string.
+func (n *Node) Connect(ctx context.Context, multiaddrStr string) error {
 	addr, err := multiaddr.NewMultiaddr(multiaddrStr)
 	if err != nil {
 		return fmt.Errorf("invalid addr: %w", err)
@@ -120,40 +107,201 @@ func (n *Node) Listen(port int) error {
 
 	pidStr := extractPeerID(multiaddrStr)
 	if pidStr == "" {
-		return fmt.Errorf("no peer ID in multiaddr: %s", multiaddrStr)
+		return fmt.Errorf("no peer ID in addr")
 	}
 
-	pid, err := corepeer.Decode(pidStr)
+	pid, err := peer.Decode(pidStr)
 	if err != nil {
-		return fmt.Errorf("invalid peer ID: %w", err)
+		return fmt.Errorf("decode peer ID: %w", err)
 	}
 
-	info := corepeer.AddrInfo{ID: pid, Addrs: []multiaddr.Multiaddr{addr}}
-	n.Host.Peerstore().AddAddrs(pid, info.Addrs, time.Hour*24)
-
-	ctx, cancel := context.WithTimeout(n.ctx, 15*time.Second)
-	defer cancel()
-
-	if err := n.Host.Connect(ctx, info); err != nil {
-		return fmt.Errorf("connect: %w", err)
-	}
-
-	log.Printf("[%s] ✓ connected to %s", n.ID[:6], pid.Pretty()[:16])
-	return nil
+	info := peer.AddrInfo{ID: pid, Addrs: []multiaddr.Multiaddr{addr}}
+	return n.Host.Connect(ctx, info)
 }
 
-// SubmitTask sends a task to a peer and waits for the result.
-func (n *Node) SubmitTask(ctx context.Context, peerID string, task *Task) error {
-	pid, err := corepeer.Decode(peerID)
+// exchangeHello opens a short-lived stream to the given peer, sends our hello
+// with all listen addresses, and reads their hello to populate our peerstore.
+func (n *Node) exchangeHello(ctx context.Context, pid peer.ID) {
+	s, err := n.Host.NewStream(ctx, pid, protocol.ID(ProtocolID))
 	if err != nil {
-		return fmt.Errorf("invalid peer: %w", err)
+		log.Printf("[%s] hello exchange with %s: %v", n.ID[:6], pid.String()[:16], err)
+		return
+	}
+	defer s.Close()
+
+	// Send hello with all our listen addresses
+	hello := HelloMsg{
+		Type:     "hello",
+		ID:       n.ID,
+		Credits:  n.Ledger.GetCredits(n.ID),
+		Multiaddrs: n.allAddrsForPeer(pid),
+	}
+	if err := json.NewEncoder(s).Encode(hello); err != nil {
+		log.Printf("[%s] hello send: %v", n.ID[:6], err)
+		return
 	}
 
-	resultCh := make(chan *TaskResult, 1)
+	// Read their hello and add their addresses to our peerstore
+	var remote HelloMsg
+	if err := json.NewDecoder(s).Decode(&remote); err != nil {
+		log.Printf("[%s] hello recv: %v", n.ID[:6], err)
+		return
+	}
+
+	if remote.Multiaddrs != nil {
+		remoteInfo := peer.AddrInfo{
+			ID:    pid,
+			Addrs: remote.Multiaddrs,
+		}
+		n.Host.Peerstore().AddAddrs(pid, remoteInfo.Addrs, 24*time.Hour)
+	}
+
+	log.Printf("[%s] hello exchanged with %s (%d addrs)", n.ID[:6], pid.String()[:16], len(remote.Multiaddrs))
+}
+
+// allAddrsForPeer returns our listen addrs with the peer's ID appended.
+func (n *Node) allAddrsForPeer(pid peer.ID) []multiaddr.Multiaddr {
+	var addrs []multiaddr.Multiaddr
+	for _, addr := range n.Host.Addrs() {
+		addrs = append(addrs, addr)
+	}
+	_ = pid // not needed — addr already has our transport addr
+	return addrs
+}
+
+// ── Protocol Messages ────────────────────────────────────────────────────────
+
+type HelloMsg struct {
+	Type      string              `json:"type"`
+	ID        string              `json:"id"`
+	Credits   int                 `json:"credits"`
+	Multiaddrs []multiaddr.Multiaddr `json:"multiaddrs,omitempty"`
+}
+
+// Task represents a compute task.
+type Task struct {
+	ID          string          `json:"id"`
+	Code        string          `json:"code,omitempty"`
+	Lang        string          `json:"lang,omitempty"`
+	TimeoutSec  int             `json:"timeout_sec"`
+	Credits     int             `json:"credits"`
+	State       string          `json:"state"`
+	Result      json.RawMessage `json:"result,omitempty"`
+	Error       string          `json:"error,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	CompletedAt *time.Time      `json:"completed_at,omitempty"`
+}
+
+// TaskResult is the result of a completed task.
+type TaskResult struct {
+	ID      string          `json:"id"`
+	Success bool            `json:"success"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   string          `json:"error,omitempty"`
+}
+
+// ── Stream Handler ───────────────────────────────────────────────────────────
+
+func (n *Node) handleStream(s network.Stream) {
+	defer s.Close()
+
+	// Decode into a generic map first to determine message type
+	var raw map[string]interface{}
+	if err := json.NewDecoder(s).Decode(&raw); err != nil {
+		log.Printf("[%s] stream decode: %v", n.ID[:6], err)
+		return
+	}
+
+	msgType, _ := raw["type"].(string)
+	switch msgType {
+	case "hello":
+		b, _ := json.Marshal(raw)
+		var h HelloMsg
+		json.Unmarshal(b, &h)
+		n.onHello(s, &h)
+
+	case "task_req":
+		if taskData, ok := raw["task"].(map[string]interface{}); ok {
+			b, _ := json.Marshal(taskData)
+			var t Task
+			json.Unmarshal(b, &t)
+			n.handleTaskRequest(s, &t)
+		}
+
+	default:
+		log.Printf("[%s] unknown msg type: %s", n.ID[:6], msgType)
+	}
+}
+
+func (n *Node) onHello(s network.Stream, hello *HelloMsg) {
+	// Add their addresses to our peerstore
+	if hello.Multiaddrs != nil && len(hello.Multiaddrs) > 0 {
+		pid := s.Conn().RemotePeer()
+		n.Host.Peerstore().AddAddrs(pid, hello.Multiaddrs, 24*time.Hour)
+	}
+
+	// Respond with our hello
+	resp := HelloMsg{
+		Type:       "hello",
+		ID:         n.ID,
+		Credits:    n.Ledger.GetCredits(n.ID),
+		Multiaddrs: n.Host.Addrs(),
+	}
+	json.NewEncoder(s).Encode(resp)
+}
+
+func decodeTaskFromStream(s network.Stream) (Task, error) {
+	var t Task
+	decoder := json.NewDecoder(s)
+	err := decoder.Decode(&t)
+	return t, err
+}
+
+func (n *Node) handleTaskRequest(s network.Stream, task *Task) {
+	if n.Ledger.GetCredits(n.ID) < task.Credits {
+		json.NewEncoder(s).Encode(map[string]string{
+			"type": "task_resp", "id": task.ID, "error": "insufficient credits",
+		})
+		return
+	}
+
+	// Execute task
+	result, err := n.executeTask(task)
+
+	// Reward executor (submitter already deducted from itself)
+	n.Ledger.AddCredits(n.ID, task.Credits)
+
+	if err != nil {
+		resp := &TaskResult{ID: task.ID, Success: false, Error: err.Error()}
+		json.NewEncoder(s).Encode(map[string]interface{}{"type": "task_resp", "result": resp})
+	} else {
+		resp := &TaskResult{ID: task.ID, Success: true, Result: result}
+		json.NewEncoder(s).Encode(map[string]interface{}{"type": "task_resp", "result": resp})
+	}
+	// Close write side so submitter's goroutine gets EOF after reading result
+	s.CloseWrite()
+}
+
+func (n *Node) handleTaskResult(result *TaskResult) {
 	n.mu.Lock()
-	n.tasks[task.ID] = task
-	n.taskChans[task.ID] = resultCh
+	ch, ok := n.taskChans[result.ID]
+	if ok {
+		ch <- result
+		delete(n.taskChans, result.ID)
+	}
 	n.mu.Unlock()
+}
+
+// ── Task Submission ───────────────────────────────────────────────────────────
+
+// SubmitTask submits a task to a peer and waits for the result.
+// Opens a stream, sends the task, reads response concurrently (goroutine),
+// so write and read can happen simultaneously without deadlock.
+func (n *Node) SubmitTask(ctx context.Context, peerID string, task *Task) error {
+	pid, err := peer.Decode(peerID)
+	if err != nil {
+		return fmt.Errorf("decode peer: %w", err)
+	}
 
 	s, err := n.Host.NewStream(ctx, pid, protocol.ID(ProtocolID))
 	if err != nil {
@@ -161,63 +309,158 @@ func (n *Node) SubmitTask(ctx context.Context, peerID string, task *Task) error 
 	}
 	defer s.Close()
 
-	enc := json.NewEncoder(s)
-	dec := json.NewDecoder(s)
+	// Deduct credits locally first (submitter pays)
+	n.Ledger.AddCredits(n.ID, -task.Credits)
 
-	// Hello handshake
-	enc.Encode(Msg{Type: "hello", From: n.ID, Payload: mustMarshal(Hello{
-		NodeID: n.ID, Credits: n.Ledger.GetCredits(n.ID),
-		CPUCores: runtime.NumCPU(), RAMFreeMB: getFreeRAM(),
-		WASMEnabled: true, Country: "IN",
-	})})
-
-	var helloResp Msg
-	if err := dec.Decode(&helloResp); err != nil {
-		return fmt.Errorf("hello: %w", err)
-	}
-
-	// Send task
-	if err := enc.Encode(Msg{Type: "task_req", From: n.ID,
-		Payload: mustMarshal(TaskReq{Task: *task})}); err != nil {
+	// Send task request
+	if err := json.NewEncoder(s).Encode(map[string]interface{}{
+		"type": "task_req",
+		"task": task,
+	}); err != nil {
+		// Refund on send failure
+		n.Ledger.AddCredits(n.ID, task.Credits)
 		return fmt.Errorf("send task: %w", err)
 	}
+	s.CloseWrite() // executor now sees EOF on its read side
 
-	log.Printf("[%s] → task %s → %s", n.ID[:6], task.ID[:8], pid.Pretty()[:12])
+	// Read result in a goroutine so write/read happen simultaneously
+	type respMsg struct {
+		Type   string       `json:"type"`
+		Result *TaskResult `json:"result,omitempty"`
+	}
+	resultCh := make(chan respMsg, 1)
+	go func() {
+		var resp respMsg
+		if err := json.NewDecoder(s).Decode(&resp); err != nil {
+			resultCh <- respMsg{Type: "error"}
+			return
+		}
+		resultCh <- resp
+	}()
 
-	// Wait for result
+	// Wait for result or timeout
 	select {
-	case result := <-resultCh:
-		n.mu.Lock()
-		task.State = result.State
-		task.Result = result.Result
-		task.Error = result.Error
-		delete(n.taskChans, task.ID)
-		delete(n.tasks, task.ID)
-		n.mu.Unlock()
-		if result.State != "done" {
-			return fmt.Errorf("task failed: %s", result.Error)
+	case resp := <-resultCh:
+		if resp.Type == "error" {
+			return fmt.Errorf("read result: decoder error")
+		}
+		if resp.Result != nil {
+			task.Result = resp.Result.Result
+			task.Error = resp.Result.Error
+			if resp.Result.Success {
+				task.State = "completed"
+			} else {
+				task.State = "failed"
+			}
 		}
 		return nil
-
 	case <-ctx.Done():
 		return ctx.Err()
-
-	case <-time.After(5 * time.Minute):
-		return fmt.Errorf("task timeout after 5 minutes")
 	}
 }
 
-// Multiaddrs returns the node's listen addresses as shareable multiaddr strings.
+// ── Task Execution ───────────────────────────────────────────────────────────
+
+func (n *Node) executeTask(task *Task) (json.RawMessage, error) {
+	if task.TimeoutSec == 0 {
+		task.TimeoutSec = 60
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(task.TimeoutSec)*time.Second)
+	defer cancel()
+
+	switch task.Lang {
+	case "python", "py", "":
+		return n.runPythonTask(ctx, task)
+	default:
+		return nil, fmt.Errorf("unsupported lang: %s", task.Lang)
+	}
+}
+
+func (n *Node) runPythonTask(ctx context.Context, task *Task) (json.RawMessage, error) {
+	switch task.ID {
+	case "builtin-fib":
+		return n.runFibTask(ctx)
+	case "builtin-matrix":
+		return n.runMatrixTask(ctx)
+	default:
+		if task.Code != "" {
+			return n.runGenericPython(ctx, task.Code)
+		}
+		return n.runFibTask(ctx)
+	}
+}
+
+func (n *Node) runFibTask(ctx context.Context) (json.RawMessage, error) {
+	script := `
+import json, time
+def fib(n):
+    a, b = 0, 1
+    for _ in range(n):
+        a, b = b, a + b
+    return a
+t0 = time.time()
+r20 = fib(20)
+r35 = fib(35)
+elapsed = (time.time() - t0) * 1000
+print(json.dumps({
+    "fib_20": r20,
+    "fib_35": r35,
+    "status": "ok",
+    "runtime": "python3",
+    "elapsed_ms": round(elapsed, 2)
+}))`
+	return runScript(ctx, script)
+}
+
+func (n *Node) runMatrixTask(ctx context.Context) (json.RawMessage, error) {
+	script := `
+import json, time
+def matrix_trace(n):
+    return sum(row[i] for i, row in enumerate([[j for j in range(i,i+n)] for i in range(n)]))
+t0 = time.time()
+r = matrix_trace(100)
+elapsed = (time.time() - t0) * 1000
+print(json.dumps({
+    "trace": r,
+    "status": "ok",
+    "runtime": "python3",
+    "elapsed_ms": round(elapsed, 2)
+}))`
+	return runScript(ctx, script)
+}
+
+func (n *Node) runGenericPython(ctx context.Context, code string) (json.RawMessage, error) {
+	script := fmt.Sprintf(`
+import json
+%s
+print(json.dumps({"status": "ok", "output": str(result)}))`, code)
+	return runScript(ctx, script)
+}
+
+func runScript(ctx context.Context, script string) (json.RawMessage, error) {
+	cmd := exec.CommandContext(ctx, "python3", "-c", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("%v | %s", err, string(out))
+	}
+	return json.RawMessage(out), nil
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+// Multiaddrs returns all listen multiaddrs for this node.
 func (n *Node) Multiaddrs() []string {
+	if n.Host == nil {
+		return nil
+	}
 	var addrs []string
 	for _, addr := range n.Host.Addrs() {
-		addrs = append(addrs,
-			fmt.Sprintf("%s/p2p/%s", addr, n.Host.ID().Pretty()))
+		addrs = append(addrs, fmt.Sprintf("%s/p2p/%s", addr, n.Host.ID().String()))
 	}
 	return addrs
 }
 
-// PeerInfo returns the first listen multiaddr (for sharing).
+// PeerInfo returns the primary multiaddr for this node.
 func (n *Node) PeerInfo() string {
 	addrs := n.Multiaddrs()
 	if len(addrs) > 0 {
@@ -235,139 +478,7 @@ func (n *Node) Close() error {
 	return nil
 }
 
-// ── Stream handler ───────────────────────────────────────────────────────────
-
-func (n *Node) handleStream(s network.Stream) {
-	defer s.Close()
-
-	dec := json.NewDecoder(s)
-	enc := json.NewEncoder(s)
-	peerID := s.Conn().RemotePeer().Pretty()[:12]
-
-	for {
-		var msg Msg
-		if err := dec.Decode(&msg); err != nil {
-			return
-		}
-
-		switch msg.Type {
-
-		case "hello":
-			var h Hello
-			json.Unmarshal(msg.Payload, &h)
-			log.Printf("[%s] ← hello from %s (%s, cores=%d)",
-				n.ID[:6], h.NodeID[:6], h.Country, h.CPUCores)
-
-			enc.Encode(Msg{Type: "hello", From: n.ID, Payload: mustMarshal(Hello{
-				NodeID: n.ID, Credits: n.Ledger.GetCredits(n.ID),
-				CPUCores: runtime.NumCPU(), RAMFreeMB: getFreeRAM(),
-				WASMEnabled: true, Country: "IN",
-			})})
-
-		case "task_req":
-			var req TaskReq
-			json.Unmarshal(msg.Payload, &req)
-			task := &req.Task
-			log.Printf("[%s] ← task %s from %s (credits=%d)",
-				n.ID[:6], task.ID[:8], peerID, task.Credits)
-
-			result, err := runPythonTest(n.ctx)
-			state := "done"
-			errStr := ""
-			if err != nil {
-				state = "failed"
-				errStr = err.Error()
-			}
-
-			n.Ledger.AddCredits(n.ID, task.Credits)
-			log.Printf("[%s]   💰 +%d credits (balance: %d) [%s]",
-				n.ID[:6], task.Credits, n.Ledger.GetCredits(n.ID), state)
-
-			enc.Encode(Msg{Type: "task_resp", From: n.ID, Payload: mustMarshal(TaskResp{
-				TaskID: task.ID, State: state,
-				Result: result, Error: errStr, Credits: task.Credits,
-			})})
-
-		case "task_resp":
-			var resp TaskResp
-			json.Unmarshal(msg.Payload, &resp)
-
-			n.mu.Lock()
-			task, ok := n.tasks[resp.TaskID]
-			ch, hasCh := n.taskChans[resp.TaskID]
-			delete(n.taskChans, resp.TaskID)
-			delete(n.tasks, resp.TaskID)
-			n.mu.Unlock()
-
-			if !ok {
-				return
-			}
-
-			task.State = resp.State
-			task.Result = resp.Result
-			task.Error = resp.Error
-
-			if resp.State == "done" {
-				n.Ledger.AddCredits(n.ID, -resp.Credits)
-				log.Printf("[%s] ✓ task %s done — balance: %d",
-					n.ID[:6], resp.TaskID[:8], n.Ledger.GetCredits(n.ID))
-			} else {
-				log.Printf("[%s] ✗ task %s failed: %s",
-					n.ID[:6], resp.TaskID[:8], resp.Error)
-			}
-
-			if hasCh {
-				ch <- &TaskResult{State: resp.State, Result: resp.Result, Error: resp.Error}
-			}
-		}
-	}
-}
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type Msg struct {
-	Type    string          `json:"type"`
-	From    string          `json:"from"`
-	Payload json.RawMessage `json:"payload,omitempty"`
-}
-
-type Hello struct {
-	NodeID      string `json:"node_id"`
-	Credits     int    `json:"credits"`
-	CPUCores    int    `json:"cpu_cores"`
-	RAMFreeMB   int    `json:"ram_free_mb"`
-	WASMEnabled bool   `json:"wasm_enabled"`
-	Country     string `json:"country"`
-}
-
-type Task struct {
-	ID         string          `json:"id"`
-	WASMPath   string          `json:"wasm_path"`
-	Input      json.RawMessage `json:"input"`
-	TimeoutSec int             `json:"timeout_sec"`
-	State      string          `json:"state"`
-	Result     json.RawMessage `json:"result,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	Credits    int             `json:"credits"`
-}
-
-type TaskReq  struct{ Task Task }
-type TaskResp struct {
-	TaskID  string          `json:"task_id"`
-	State   string          `json:"state"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   string         `json:"error,omitempty"`
-	Credits int            `json:"credits"`
-}
-
-type TaskResult struct {
-	State  string          `json:"state"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  string         `json:"error,omitempty"`
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
+// extractPeerID pulls the peer ID component from a multiaddr string.
 func extractPeerID(addr string) string {
 	if i := strings.Index(addr, "/p2p/"); i >= 0 {
 		rest := addr[i+len("/p2p/"):]
@@ -376,44 +487,5 @@ func extractPeerID(addr string) string {
 		}
 		return rest
 	}
-	return ""
+	return addr
 }
-
-func getFreeRAM() int {
-	data, _ := os.ReadFile("/proc/meminfo")
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "MemAvailable:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				kb, _ := strconv.Atoi(fields[1])
-				return kb / 1024
-			}
-		}
-	}
-	return 0
-}
-
-func mustMarshal(v interface{}) json.RawMessage {
-	b, _ := json.Marshal(v)
-	return b
-}
-
-func runPythonTest(ctx context.Context) (json.RawMessage, error) {
-	script := `import json
-def fib(n):
-    a,b=0,1
-    for _ in range(n): a,b=b,a+b
-    return a
-result={"fib_20":fib(20),"fib_35":fib(35),"status":"ok","runtime":"python3","node":"openpool-libp2p"}
-print(json.dumps(result))`
-
-	cmd := exec.CommandContext(ctx, "python3", "-c", script)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("python: %v | %s", err, string(out))
-	}
-	return json.RawMessage(out), nil
-}
-
-// ── Unused ──────────────────────────────────────────────────────────────────
-var _ = sync.RWMutex{}

@@ -184,6 +184,7 @@ type Task struct {
 	ID          string          `json:"id"`
 	Code        string          `json:"code,omitempty"`
 	Lang        string          `json:"lang,omitempty"`
+	Params      json.RawMessage `json:"params,omitempty"`  // chunk params, routing hints, etc.
 	TimeoutSec  int             `json:"timeout_sec"`
 	Credits     int             `json:"credits"`
 	State       string          `json:"state"`
@@ -214,7 +215,7 @@ func (n *Node) handleStream(s network.Stream) {
 	}
 
 	msgType, _ := raw["type"].(string)
-	switch msgType {
+		switch msgType {
 	case "hello":
 		b, _ := json.Marshal(raw)
 		var h HelloMsg
@@ -267,8 +268,8 @@ func (n *Node) handleTaskRequest(s network.Stream, task *Task) {
 	}
 
 	// Execute task
-	result, err := n.executeTask(task)
-
+		result, err := n.executeTask(task)
+		
 	// Reward executor (submitter already deducted from itself)
 	n.Ledger.AddCredits(n.ID, task.Credits)
 
@@ -277,7 +278,7 @@ func (n *Node) handleTaskRequest(s network.Stream, task *Task) {
 		json.NewEncoder(s).Encode(map[string]interface{}{"type": "task_resp", "result": resp})
 	} else {
 		resp := &TaskResult{ID: task.ID, Success: true, Result: result}
-		json.NewEncoder(s).Encode(map[string]interface{}{"type": "task_resp", "result": resp})
+				json.NewEncoder(s).Encode(map[string]interface{}{"type": "task_resp", "result": resp})
 	}
 	// Close write side so submitter's goroutine gets EOF after reading result
 	s.CloseWrite()
@@ -378,6 +379,11 @@ func (n *Node) executeTask(task *Task) (json.RawMessage, error) {
 }
 
 func (n *Node) runPythonTask(ctx context.Context, task *Task) (json.RawMessage, error) {
+	// If task has Params, it's a chunk — use chunk-specific execution
+	if task.Params != nil && len(task.Params) > 2 {
+		return n.runChunkedPython(ctx, task)
+	}
+
 	switch task.ID {
 	case "builtin-fib":
 		return n.runFibTask(ctx)
@@ -445,6 +451,52 @@ func runScript(ctx context.Context, script string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("%v | %s", err, string(out))
 	}
 	return json.RawMessage(out), nil
+}
+
+
+
+// runChunkedPython executes a chunk of work based on Params.
+// Params format: {"type":"range","start":N,"end":M} or {"type":"map","data":[...]}
+func (n *Node) runChunkedPython(ctx context.Context, task *Task) (json.RawMessage, error) {
+	var params struct {
+		Type  string `json:"type"`
+		Start int    `json:"start"`
+		End   int    `json:"end"`
+		Data  []interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(task.Params, &params); err != nil {
+		return nil, fmt.Errorf("parse params: %w", err)
+	}
+
+	switch params.Type {
+	case "range":
+		// Compute sum of squares for range [start, end) — stays in float64 range
+		script := fmt.Sprintf(`
+import json, time
+t0 = time.time()
+start, end = %d, %d
+result = sum(i*i for i in range(start, end))
+elapsed = (time.time() - t0) * 1000
+print(json.dumps({"chunk_sum": result, "range": [start, end], "count": end-start, "elapsed_ms": round(elapsed, 1)}))
+`, params.Start, params.End)
+		return runScript(ctx, script)
+
+	case "matrix_slice":
+		// Compute a slice of a matrix operation
+		script := fmt.Sprintf(`
+import json
+size = %d
+matrix = [[(i*size+j) for j in range(size)] for i in range(size)]
+row = %d
+trace = sum(matrix[i][i] for i in range(len(matrix)))
+row_sum = sum(matrix[row])
+print(json.dumps({"row_sum": row_sum, "trace": trace, "row": %d}))
+`, 100, params.Start, params.Start)
+		return runScript(ctx, script)
+
+	default:
+		return nil, fmt.Errorf("unknown chunk type: %s", params.Type)
+	}
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

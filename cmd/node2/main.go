@@ -20,6 +20,7 @@ import (
 
 	"github.com/dp229/openpool/pkg/ledger"
 	"github.com/dp229/openpool/pkg/p2p"
+	"github.com/dp229/openpool/pkg/scheduler"
 )
 
 var (
@@ -36,6 +37,7 @@ var (
 	flagDiscover  = flag.Bool("discover", false, "Discover peers via DHT (implies --dht)")
 	flagMaxPeers  = flag.Int("max-peers", 5, "Max peers to discover via DHT")
 	flagConnect   = flag.String("connect", "", "Connect to a peer multiaddr")
+	flagChunked  = flag.Int("chunked", 0, "Split task into N chunks across peers")
 )
 
 func main() {
@@ -141,7 +143,92 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Send task to peer
+	// Chunked task submission (MapReduce)
+	if *flagChunked > 0 && *flagTaskFile != "" {
+		data, err := os.ReadFile(*flagTaskFile)
+		if err != nil {
+			log.Fatal("Task file:", err)
+		}
+		var task p2p.Task
+		json.Unmarshal(data, &task)
+		if task.ID == "" {
+			task.ID = nodeID + "-chunked-task"
+		}
+		task.Credits = 10
+		task.State = "pending"
+		task.CreatedAt = time.Now()
+
+		sched := scheduler.New(node, nodeID)
+
+		// MapReduce: split fib(1M) into N chunks, reduce by summing
+		mr := scheduler.MapReduce{
+			Split: func(t *p2p.Task) ([]scheduler.Chunk, error) {
+				total := 20000 // 20k total, split into chunks
+				chunkSize := total / *flagChunked
+				var chunks []scheduler.Chunk
+				for i := 0; i < *flagChunked; i++ {
+					start := i * chunkSize
+					end := start + chunkSize
+					if i == *flagChunked-1 {
+						end = total
+					}
+					params, _ := json.Marshal(map[string]interface{}{
+						"type": "range", "start": start, "end": end,
+					})
+					chunks = append(chunks, scheduler.Chunk{
+						ID: fmt.Sprintf("%s-chunk-%d", t.ID, i), TaskID: t.ID, Index: i,
+						Params: params, Credits: 10, Timeout: 60,
+					})
+				}
+				return chunks, nil
+			},
+			Reduce: func(results []scheduler.ChunkResult) (json.RawMessage, error) {
+				var total int64
+				success := 0
+				var errors []string
+				for _, r := range results {
+					fmt.Printf("DEBUG Reduce: chunkID=%s success=%v data_len=%d\n", r.ChunkID, r.Success, len(r.Data))
+					if r.Success && len(r.Data) > 0 {
+						var p map[string]interface{}
+						if err := json.Unmarshal(r.Data, &p); err != nil {
+							fmt.Printf("DEBUG: unmarshal failed: %v\n", err)
+						} else if sumStr, ok := p["chunk_sum"].(string); ok {
+							// Parse large integer from string (approximate via float for demo)
+							var sum float64
+							fmt.Sscanf(sumStr, "%f", &sum)
+							total += int64(sum)
+							success++
+							} else if sumNum, ok := p["chunk_sum"].(float64); ok {
+							total += int64(sumNum)
+							success++
+						}
+					} else {
+						errors = append(errors, r.Error)
+					}
+				}
+				out, _ := json.Marshal(map[string]interface{}{
+					"sum_squares": total, "status": "completed",
+					"chunks_success": success, "chunks_total": len(results),
+					"errors": errors, "parallelism": *flagChunked,
+				})
+				return out, nil
+			},
+		}
+
+		fmt.Printf("→ Chunking into %d parts...\n", *flagChunked)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+
+		result, err := sched.SubmitChunked(ctx, &task, mr)
+		if err != nil {
+			fmt.Printf("✗ Failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✓ Done! Result:\n%s\n", string(result.Result))
+		os.Exit(0)
+	}
+
+	// Single task submission
 	if *flagSend != "" && *flagTaskFile != "" {
 		data, err := os.ReadFile(*flagTaskFile)
 		if err != nil {
@@ -160,7 +247,6 @@ func main() {
 		defer cancel()
 
 		peerID := extractPeerID(*flagSend)
-		// Strip any multiaddr prefix if full multiaddr was pasted
 		peerID = strings.TrimPrefix(peerID, "/p2p/")
 		if i := strings.Index(peerID, "/"); i >= 0 {
 			peerID = peerID[:i]

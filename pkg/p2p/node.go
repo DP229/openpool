@@ -25,7 +25,7 @@ const ProtocolID = "/openpool/1.0"
 
 // ── Node ─────────────────────────────────────────────────────────────────────
 
-// Node is a libp2p-backed P2P node with NAT traversal.
+// Node is a libp2p-backed P2P node with NAT traversal and DHT discovery.
 type Node struct {
 	ID     string
 	Host   host.Host
@@ -34,9 +34,10 @@ type Node struct {
 	tasks     map[string]*Task
 	taskChans map[string]chan *TaskResult
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	mu     sync.RWMutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	mu         sync.RWMutex
+	DHTClient  interface{ Bootstrap(ctx context.Context) error; Close() error; GetClosestPeers(ctx context.Context, key string) ([]peer.ID, error) } // kad-dht client (started lazily)
 }
 
 // LedgerDB is the database interface.
@@ -472,6 +473,9 @@ func (n *Node) PeerInfo() string {
 // Close shuts down the node.
 func (n *Node) Close() error {
 	n.cancel()
+	if n.DHTClient != nil {
+		n.DHTClient.Close()
+	}
 	if n.Host != nil {
 		return n.Host.Close()
 	}

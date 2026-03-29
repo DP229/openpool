@@ -20,6 +20,7 @@ import (
 
 	"github.com/dp229/openpool/pkg/executor"
 	"github.com/dp229/openpool/pkg/ledger"
+	"github.com/dp229/openpool/pkg/marketplace"
 	"github.com/dp229/openpool/pkg/p2p"
 	"github.com/dp229/openpool/pkg/scheduler"
 	"github.com/dp229/openpool/pkg/verification"
@@ -44,6 +45,8 @@ var (
 	flagWASM    = flag.String("wasm", "", "WASM module path for local execution")
 	flagPeerstore = flag.String("peerstore", "", "Path to peerstore JSON file for persistence")
 	flagVerify   = flag.Bool("verify", true, "Enable task verification")
+	flagMarket   = flag.Bool("market", false, "Enable task marketplace")
+	flagPrice    = flag.Int("price", 10, "Price per task (credits)")
 )
 
 func main() {
@@ -292,9 +295,31 @@ func main() {
 		log.Printf("✓ WASM executor ready (native mode)")
 	}
 
+	// Marketplace
+	var market *marketplace.Marketplace
+	if *flagMarket {
+		market, err = marketplace.New(*flagLedger, nodeID)
+		if err != nil {
+			log.Printf("⚠ Marketplace init error: %v", err)
+		} else {
+			// Register this node
+			multiaddr := ""
+			if len(node.Multiaddrs()) > 0 {
+				multiaddr = node.Multiaddrs()[0]
+			}
+			market.RegisterNode(marketplace.NodeInfo{
+				NodeID:      nodeID,
+				Multiaddr:   multiaddr,
+				PricePerTask: *flagPrice,
+				Status:      "online",
+			})
+			log.Printf("✓ Marketplace enabled (price: %d credits/task)", *flagPrice)
+		}
+	}
+
 	// HTTP API
 	if *flagHTTP > 0 {
-		go serveHTTP(node, db, nodeID, exec, *flagHTTP)
+		go serveHTTP(node, db, nodeID, exec, *flagHTTP, market)
 	}
 
 	// Wait for shutdown
@@ -385,7 +410,7 @@ func getFreeRAM() int {
 	return 0
 }
 
-func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.Executor, port int) {
+func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.Executor, port int, market *marketplace.Marketplace) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -514,11 +539,82 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 	
 	// Node stats endpoint
 	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+		if market == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
+			return
+		}
+		
+		nodes, err := market.GetNodes()
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"node_id": nodeID,
-			"verification": "enabled",
-			"note": "stats API needs verifier instance in serveHTTP"
+			"marketplace": "enabled",
+			"available_nodes": len(nodes),
 		})
+	})
+	
+	// Marketplace: List available nodes
+	mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
+		if market == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
+			return
+		}
+		nodes, err := market.GetNodes()
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"nodes": nodes, "count": len(nodes)})
+	})
+	
+	// Marketplace: Publish task
+	mux.HandleFunc("/tasks", func(w http.ResponseWriter, r *http.Request) {
+		if market == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
+			return
+		}
+		
+		if r.Method == http.MethodPost {
+			var task marketplace.TaskListing
+			if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+			if err := market.PublishTask(task); err != nil {
+				json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok", "task_id": task.TaskID})
+			return
+		}
+		
+		// GET: List tasks
+		status := r.URL.Query().Get("status")
+		tasks, err := market.GetTasks(status)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"tasks": tasks, "count": len(tasks)})
+	})
+	
+	// Marketplace: Get task result
+	mux.HandleFunc("/tasks/", func(w http.ResponseWriter, r *http.Request) {
+		if market == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
+			return
+		}
+		
+		taskID := r.URL.Path[len("/tasks/"):]
+		task, err := market.GetTask(taskID)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(task)
 	})
 	mux.HandleFunc("/run", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

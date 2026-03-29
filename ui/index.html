@@ -83,6 +83,7 @@
       <button class="tab" onclick="showTab('peers')">👥 Peers</button>
       <button class="tab" onclick="showTab('connect')">🔗 Connect</button>
       <button class="tab" onclick="showTab('market')">🏪 Market</button>
+      <button class="tab" onclick="showTab('gpu')">🖥️ GPU</button>
     </div>
     
     <!-- Run Task Tab -->
@@ -157,6 +158,32 @@
       <h3>Credit Ledger</h3>
       <div class="output" id="ledgerData">Loading...</div>
       <button class="btn secondary" onclick="showTab('run')" style="margin-top:12px">← Back</button>
+    </div>
+    
+    <!-- GPU Tab -->
+    <div id="tab-gpu" class="card" style="display:none">
+      <h3>GPU Execution</h3>
+      <button class="btn secondary" onclick="loadGPU()" style="margin-bottom:12px">🔄 Check GPU</button>
+      <div class="output" id="gpuInfo">Click to check GPU status...</div>
+      
+      <h3 style="margin-top:24px">Run GPU Task</h3>
+      <div style="display: grid; gap: 12px; margin-top:12px">
+        <div>
+          <label class="label">Operation</label>
+          <select id="gpuOp">
+            <option value="matrixMul">matrixMul - Matrix Multiplication</option>
+            <option value="conv2d">conv2d - 2D Convolution</option>
+            <option value="gemm">gemm - General Matrix Multiply</option>
+            <option value="fft">fft - Fast Fourier Transform</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Matrix Size</label>
+          <input type="number" id="gpuSize" value="64" min="2" max="1024">
+        </div>
+        <button class="btn" onclick="runGPU()">🖥️ Execute on GPU</button>
+        <div class="output" id="gpuResult">Results will appear here...</div>
+      </div>
     </div>
   </div>
 
@@ -307,6 +334,57 @@
       document.getElementById('viewBidsResult').textContent = JSON.stringify(res, null, 2);
     }
     
+    async function loadGPU() {
+      const res = await apiCall('/gpu');
+      document.getElementById('gpuInfo').textContent = JSON.stringify(res, null, 2);
+    }
+    
+    async function runGPU() {
+      const op = document.getElementById('gpuOp').value;
+      const size = parseInt(document.getElementById('gpuSize').value);
+      
+      let input = {};
+      if (op === 'matrixMul') {
+        // Generate random matrices
+        const a = [], b = [];
+        for (let i = 0; i < size; i++) {
+          a.push(Array.from({length: size}, () => Math.random()));
+          b.push(Array.from({length: size}, () => Math.random()));
+        }
+        input = { a, b, transpose_a: false, transpose_b: false };
+      } else if (op === 'gemm') {
+        input = {
+          a: Array.from({length: size * size}, () => Math.random()),
+          b: Array.from({length: size * size}, () => Math.random()),
+          m: size, n: size, k: size,
+          transpose_a: false, transpose_b: false,
+          alpha: 1.0, beta: 0.0
+        };
+      } else if (op === 'fft') {
+        input = {
+          real: Array.from({length: size}, (_, i) => Math.sin(i)),
+          imag: Array.from({length: size}, () => 0),
+          inverse: false
+        };
+      } else if (op === 'conv2d') {
+        input = {
+          input: Array.from({length: size}, () => 
+            Array.from({length: size}, () => [Math.random()])
+          ),
+          kernel: Array.from({length: 3}, () => 
+            Array.from({length: 3}, () => [0.5])
+          ),
+          stride: 1, padding: 1
+        };
+      }
+      
+      const res = await apiCall('/gpu/run', {
+        method: 'POST',
+        body: JSON.stringify({ op, input })
+      });
+      document.getElementById('gpuResult').textContent = JSON.stringify(res, null, 2);
+    }
+    
     async function showLedger() {
       const res = await apiCall('/ledger');
       document.getElementById('ledgerData').textContent = JSON.stringify(res, null, 2);
@@ -318,7 +396,7 @@
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('[id^="tab-"]').forEach(t => t.style.display = 'none');
       
-      document.querySelectorAll('.tab')[tab === 'run' ? 0 : tab === 'peers' ? 1 : tab === 'connect' ? 2 : tab === 'market' ? 3 : tab === 'ledger' ? 4 : 0].classList.add('active');
+      document.querySelectorAll('.tab')[tab === 'run' ? 0 : tab === 'peers' ? 1 : tab === 'connect' ? 2 : tab === 'market' ? 3 : tab === 'ledger' ? 4 : tab === 'gpu' ? 5 : 0].classList.add('active');
       document.getElementById('tab-' + tab).style.display = 'block';
     }
     

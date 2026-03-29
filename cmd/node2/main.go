@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/dp229/openpool/pkg/executor"
+	"github.com/dp229/openpool/pkg/gpu"
 	"github.com/dp229/openpool/pkg/ledger"
 	"github.com/dp229/openpool/pkg/marketplace"
 	"github.com/dp229/openpool/pkg/p2p"
@@ -47,6 +48,7 @@ var (
 	flagVerify   = flag.Bool("verify", true, "Enable task verification")
 	flagMarket   = flag.Bool("market", false, "Enable task marketplace")
 	flagPrice    = flag.Int("price", 10, "Price per task (credits)")
+	flagGPU      = flag.Bool("gpu", false, "Enable GPU execution")
 )
 
 func main() {
@@ -317,9 +319,24 @@ func main() {
 		}
 	}
 
+	// GPU Execution
+	var gpupool *gpu.Pool
+	if *flagGPU {
+		gpupool = gpu.New()
+		if err := gpupool.Detect(); err != nil {
+			log.Printf("⚠ GPU detection: %v (running in CPU mode)", err)
+		} else {
+			devs := gpupool.Devices()
+			log.Printf("✓ GPU enabled: %d device(s)", len(devs))
+			for _, d := range devs {
+				log.Printf("  - %s (%s, %dMB VRAM)", d.Name, d.Vendor, d.VRAMMB)
+			}
+		}
+	}
+
 	// HTTP API
 	if *flagHTTP > 0 {
-		go serveHTTP(node, db, nodeID, exec, *flagHTTP, market)
+		go serveHTTP(node, db, nodeID, exec, *flagHTTP, market, gpupool)
 	}
 
 	// Wait for shutdown
@@ -410,7 +427,7 @@ func getFreeRAM() int {
 	return 0
 }
 
-func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.Executor, port int, market *marketplace.Marketplace) {
+func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.Executor, port int, market *marketplace.Marketplace, gpupool *gpu.Pool) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -554,6 +571,54 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 			"marketplace": "enabled",
 			"available_nodes": len(nodes),
 		})
+	})
+	
+	// GPU stats endpoint
+	mux.HandleFunc("/gpu", func(w http.ResponseWriter, r *http.Request) {
+		if gpupool == nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"enabled": false,
+				"devices": []interface{}{},
+				"message": "Use --gpu flag to enable GPU execution",
+			})
+			return
+		}
+		
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"enabled": gpupool.IsEnabled(),
+			"devices": gpupool.Devices(),
+		})
+	})
+	
+	// GPU execute endpoint
+	mux.HandleFunc("/gpu/run", func(w http.ResponseWriter, r *http.Request) {
+		if gpupool == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "GPU not enabled"})
+			return
+		}
+		
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", 405)
+			return
+		}
+		
+		var req struct {
+			Op    string `json:"op"`
+			Input json.RawMessage `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		
+		result, err := gpupool.Execute(context.Background(), req.Op, req.Input)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(result)
 	})
 	
 	// Marketplace: List available nodes

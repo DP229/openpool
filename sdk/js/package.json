@@ -1,0 +1,10 @@
+{
+  "name": "openpool-sdk",
+  "version": "0.1.0",
+  "description": "Node.js client for OpenPool distributed computing network",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {
+    "undici": "^6.0.0"
+  }
+}

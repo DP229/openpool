@@ -262,6 +262,51 @@
       document.getElementById('taskResult').textContent = JSON.stringify(res, null, 2);
     }
     
+    async function placeBid() {
+      const taskId = document.getElementById('bidTaskId').value;
+      const credits = parseInt(document.getElementById('bidCredits').value);
+      const eta = parseInt(document.getElementById('bidEta').value);
+      
+      if (!taskId) {
+        showError('Enter task ID');
+        return;
+      }
+      
+      const res = await apiCall('/bids', {
+        method: 'POST',
+        body: JSON.stringify({
+          task_id: taskId,
+          node_id: 'local-node',
+          node_addr: '/ip4/127.0.0.1/tcp/9000',
+          credits: credits,
+          eta_sec: eta
+        })
+      });
+      document.getElementById('bidResult').textContent = JSON.stringify(res, null, 2);
+    }
+    
+    async function viewBids() {
+      const taskId = document.getElementById('viewBidsTaskId').value;
+      if (!taskId) {
+        showError('Enter task ID');
+        return;
+      }
+      
+      const res = await apiCall('/bids?task_id=' + taskId);
+      document.getElementById('viewBidsResult').textContent = JSON.stringify(res, null, 2);
+    }
+    
+    async function autoMatch() {
+      const taskId = document.getElementById('viewBidsTaskId').value;
+      if (!taskId) {
+        showError('Enter task ID first');
+        return;
+      }
+      
+      const res = await apiCall('/match?task_id=' + taskId);
+      document.getElementById('viewBidsResult').textContent = JSON.stringify(res, null, 2);
+    }
+    
     async function showLedger() {
       const res = await apiCall('/ledger');
       document.getElementById('ledgerData').textContent = JSON.stringify(res, null, 2);
@@ -312,10 +357,6 @@
   <h3 style="margin-top:24px">Publish Task</h3>
   <div style="display: grid; gap: 12px; margin-top:12px">
     <div>
-      <label class="label">Task ID</label>
-      <input type="text" id="taskId" placeholder="task-123">
-    </div>
-    <div>
       <label class="label">Operation</label>
       <select id="marketOp">
         <option value="fib">fib - Fibonacci</option>
@@ -329,5 +370,34 @@
     </div>
     <button class="btn" onclick="publishTask()">📤 Publish Task</button>
     <div class="output" id="taskResult">Task status...</div>
+  </div>
+  
+  <h3 style="margin-top:24px">Bid on Task</h3>
+  <div style="display: grid; gap: 12px; margin-top:12px">
+    <div>
+      <label class="label">Task ID</label>
+      <input type="text" id="bidTaskId" placeholder="task-123">
+    </div>
+    <div>
+      <label class="label">Your Bid (credits)</label>
+      <input type="number" id="bidCredits" value="8" min="1">
+    </div>
+    <div>
+      <label class="label">ETA (seconds)</label>
+      <input type="number" id="bidEta" value="30" min="1">
+    </div>
+    <button class="btn" onclick="placeBid()">💰 Place Bid</button>
+    <div class="output" id="bidResult">Bid status...</div>
+  </div>
+  
+  <h3 style="margin-top:24px">View Bids</h3>
+  <div style="display: grid; gap: 12px; margin-top:12px">
+    <div>
+      <label class="label">Task ID</label>
+      <input type="text" id="viewBidsTaskId" placeholder="task-123">
+    </div>
+    <button class="btn secondary" onclick="viewBids()">👁 View Bids</button>
+    <button class="btn" onclick="autoMatch()">⚡ Auto-Match Best Bid</button>
+    <div class="output" id="viewBidsResult">Bids will appear here...</div>
   </div>
 </div>

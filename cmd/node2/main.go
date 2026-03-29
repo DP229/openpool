@@ -616,6 +616,89 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		}
 		json.NewEncoder(w).Encode(task)
 	})
+	
+	// Bidding: Place a bid on a task
+	mux.HandleFunc("/bids", func(w http.ResponseWriter, r *http.Request) {
+		if market == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
+			return
+		}
+		
+		if r.Method == http.MethodPost {
+			var req struct {
+				TaskID   string `json:"task_id"`
+				NodeID   string `json:"node_id"`
+				NodeAddr string `json:"node_addr"`
+				Credits  int    `json:"credits"`
+				ETASec   int    `json:"eta_sec"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+			
+			bid, err := market.PlaceBid(context.Background(), req.TaskID, req.NodeID, req.NodeAddr, req.Credits, req.ETASec)
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "bid": bid})
+			return
+		}
+		
+		// GET: List bids for a task
+		taskID := r.URL.Query().Get("task_id")
+		if taskID == "" {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "task_id required"})
+			return
+		}
+		
+		bids, err := market.GetBidsForTask(taskID)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"bids": bids, "count": len(bids)})
+	})
+	
+	// Bidding: Get winning bid for a task
+	mux.HandleFunc("/bids/", func(w http.ResponseWriter, r *http.Request) {
+		if market == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
+			return
+		}
+		
+		taskID := r.URL.Path[len("/bids/"):]
+		
+		// Get winning bid
+		bid, err := market.GetWinningBid(taskID)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"winning_bid": bid})
+	})
+	
+	// Bidding: Auto-match best bid
+	mux.HandleFunc("/match", func(w http.ResponseWriter, r *http.Request) {
+		if market == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
+			return
+		}
+		
+		taskID := r.URL.Query().Get("task_id")
+		if taskID == "" {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "task_id required"})
+			return
+		}
+		
+		bid, err := market.AutoMatch(taskID)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "matched_bid": bid})
+	})
 	mux.HandleFunc("/run", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST only", 405)

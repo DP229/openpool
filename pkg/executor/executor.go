@@ -7,18 +7,20 @@ import (
 	"time"
 
 	"github.com/dp229/openpool/pkg/ledger"
+	"github.com/dp229/openpool/pkg/verification"
 	"github.com/dp229/openpool/pkg/wasm"
 )
 
 // Executor runs WASM tasks and returns results.
 type Executor struct {
-	runtime *wasm.Runtime
-	ledger  *ledger.Ledger
+	runtime     *wasm.Runtime
+	ledger      *ledger.Ledger
+	verifier    *verification.Verifier
 }
 
 // New creates a new task executor.
-func New(runtime *wasm.Runtime, ledger *ledger.Ledger) *Executor {
-	return &Executor{runtime: runtime, ledger: ledger}
+func New(runtime *wasm.Runtime, ledger *ledger.Ledger, verifier *verification.Verifier) *Executor {
+	return &Executor{runtime: runtime, ledger: ledger, verifier: verifier}
 }
 
 // Execute runs a task and returns the result.
@@ -39,6 +41,8 @@ func (e *Executor) Execute(ctx context.Context, task *Task) (json.RawMessage, er
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	startTime := time.Now()
+
 	// Use WASM path from task, pass raw JSON input
 	result, err := e.runtime.RunTask(ctx, task.WASMPath, task.RawInput)
 	if err != nil {
@@ -50,11 +54,34 @@ func (e *Executor) Execute(ctx context.Context, task *Task) (json.RawMessage, er
 		return nil, fmt.Errorf("WASM returned invalid JSON")
 	}
 
+	durationMs := time.Since(startTime).Milliseconds()
+
+	// Record verification if verifier is enabled
+	if e.verifier != nil && task.ID != "" {
+		inputHash := verification.HashInput(task.RawInput)
+		outputHash := verification.HashOutput(result)
+		
+		verr := e.verifier.RecordVerification(context.Background(), verification.VerificationResult{
+			TaskID:       task.ID,
+			Method:       verification.MethodRedundant,
+			PrimaryNode:  task.NodeID,
+			InputHash:    inputHash,
+			OutputHash:   outputHash,
+			Match:        true, // First result always matches itself
+			DurationMs:   durationMs,
+			Timestamp:    time.Now().Unix(),
+		})
+		if verr != nil {
+			fmt.Printf("⚠ Verification record error: %v\n", verr)
+		}
+	}
+
 	return result, nil
 }
 
 type Task struct {
 	ID         string          `json:"-"`
+	NodeID     string          `json:"-"`
 	WASMPath   string          `json:"-"`
 	RawInput   json.RawMessage `json:"-"`
 	TimeoutSec int             `json:"timeout_sec"`

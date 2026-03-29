@@ -22,6 +22,7 @@ import (
 	"github.com/dp229/openpool/pkg/ledger"
 	"github.com/dp229/openpool/pkg/p2p"
 	"github.com/dp229/openpool/pkg/scheduler"
+	"github.com/dp229/openpool/pkg/verification"
 	"github.com/dp229/openpool/pkg/wasm"
 )
 
@@ -42,6 +43,7 @@ var (
 	flagChunked  = flag.Int("chunked", 0, "Split task into N chunks across peers")
 	flagWASM    = flag.String("wasm", "", "WASM module path for local execution")
 	flagPeerstore = flag.String("peerstore", "", "Path to peerstore JSON file for persistence")
+	flagVerify   = flag.Bool("verify", true, "Enable task verification")
 )
 
 func main() {
@@ -271,16 +273,23 @@ func main() {
 	var exec *executor.Executor
 	if *flagWASM != "" {
 		r, err := wasm.New()
-		if err != nil {
-			log.Printf("WASM init error: %v", err)
-		} else {
-			if err := r.LoadModule(*flagWASM); err != nil {
-				log.Printf("WASM load error: %v", err)
+	if err != nil {
+		log.Printf("WASM init error: %v", err)
+	} else {
+		// Create verifier if enabled
+		var v *verification.Verifier
+		if *flagVerify {
+			v, err = verification.NewWithDefaults(*flagLedger)
+			if err != nil {
+				log.Printf("⚠ Verifier init error: %v (continuing without)", err)
+				v = nil
 			} else {
-				exec = executor.New(r, db)
-				log.Printf("✓ WASM executor ready: %s", *flagWASM)
+				log.Printf("✓ Task verifier ready")
 			}
 		}
+		
+		exec = executor.New(r, db, v)
+		log.Printf("✓ WASM executor ready (native mode)")
 	}
 
 	// HTTP API

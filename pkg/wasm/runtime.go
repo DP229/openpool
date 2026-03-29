@@ -1,162 +1,173 @@
+// Package wasm provides a sandboxed WASM executor using the wasmtime Go API.
 package wasm
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"time"
+
+	"github.com/bytecodealliance/wasmtime-go/v9"
 )
 
-// Runtime wraps the wasmtime CLI binary for WASM execution.
+// Op constants for the sandbox WASM module.
+const (
+	OpFib        = 0
+	OpSumFib     = 1
+	OpSumSquares = 2
+	OpMatrixTrace = 3
+)
+
+// Runtime wraps a wasmtime engine for sandboxed WASM execution.
 type Runtime struct {
-	wasmtimePath string
+	engine    *wasmtime.Engine
+	module    *wasmtime.Module
 }
 
-// New creates a WASM runtime by locating the wasmtime binary.
+// New creates a new WASM runtime.
 func New() (*Runtime, error) {
-	paths := []string{
-		"/home/durga/bin/wasmtime",
-		"/usr/local/bin/wasmtime",
-		"/usr/bin/wasmtime",
-		filepath.Join(os.Getenv("HOME"), "bin", "wasmtime"),
+	engine := wasmtime.NewEngine()
+	return &Runtime{engine: engine}, nil
+}
+
+// LoadModule reads and compiles a WASM binary from disk.
+func (r *Runtime) LoadModule(path string) error {
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read wasm file: %w", err)
+	}
+	module, err := wasmtime.NewModule(r.engine, bytes)
+	if err != nil {
+		return fmt.Errorf("compile wasm: %w", err)
+	}
+	r.module = module
+	return nil
+}
+
+// Run executes the loaded WASM module.
+// op: 0=fib, 1=sumFib, 2=sumSquares, 3=matrixTrace
+// n: input number
+// Returns JSON: {"op":"fib","n":30,"result":832040}
+func (r *Runtime) Run(ctx context.Context, op int, n int) (json.RawMessage, error) {
+	if r.module == nil {
+		return nil, fmt.Errorf("no module loaded")
 	}
 
-	for _, p := range paths {
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			return &Runtime{wasmtimePath: p}, nil
+	store := wasmtime.NewStore(r.engine)
+	linker := wasmtime.NewLinker(r.engine)
+
+	// Link WASI
+	if err := linker.DefineWasi(); err != nil {
+		return nil, fmt.Errorf("define wasi: %w", err)
+	}
+	wasiConfig := wasmtime.NewWasiConfig()
+	wasiConfig.InheritStdout()
+	wasiConfig.InheritStderr()
+	store.SetWasi(wasiConfig)
+
+	instance, err := linker.Instantiate(store, r.module)
+	if err != nil {
+		return nil, fmt.Errorf("instantiate: %w", err)
+	}
+
+	runFunc := instance.GetFunc(store, "run")
+	if runFunc == nil {
+		return nil, fmt.Errorf("module missing 'run' export")
+	}
+
+	// Execute with timeout
+	type result struct {
+		ret int64
+		err error
+	}
+	resCh := make(chan result, 1)
+
+	go func() {
+		ret, err := runFunc.Call(store, int32(op), int32(n))
+		if err != nil {
+			resCh <- result{err: fmt.Errorf("wasm: %w", err)}
+			return
 		}
-	}
+		resCh <- result{ret: ret.(int64)}
+	}()
 
-	return nil, fmt.Errorf("wasmtime binary not found in %v", paths)
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("timeout")
+	case r := <-resCh:
+		if r.err != nil {
+			return nil, r.err
+		}
+		opNames := []string{"fib", "sumFib", "sumSquares", "matrixTrace"}
+		name := "unknown"
+		if op >= 0 && op < len(opNames) {
+			name = opNames[op]
+		}
+		return json.RawMessage(fmt.Sprintf(
+			`{"op":"%s","n":%d,"result":%d,"status":"ok","runtime":"wasmtime"}`,
+			name, n, r.ret,
+		)), nil
+	}
 }
 
-// Version returns the wasmtime version string.
-func (r *Runtime) Version() string {
-	out, err := exec.Command(r.wasmtimePath, "--version").Output()
-	if err != nil {
-		return "unknown"
-	}
-	return strings.TrimSpace(string(out))
+// TaskInput represents task input JSON.
+type TaskInput struct {
+	Op   string `json:"op"`
+	Arg  int    `json:"arg"`
 }
 
-// RunFile executes a WASM file with the given JSON input.
-func (r *Runtime) RunFile(wasmPath string, input json.RawMessage) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	return r.run(ctx, wasmPath, input)
+// OpToID converts operation name to ID.
+func OpToID(op string) int {
+	switch op {
+	case "fib":
+		return OpFib
+	case "sumFib":
+		return OpSumFib
+	case "sumSquares":
+		return OpSumSquares
+	case "matrixTrace":
+		return OpMatrixTrace
+	default:
+		return -1
+	}
 }
 
-// Run executes WASM bytes with the given JSON input.
-func (r *Runtime) Run(ctx context.Context, wasmBytes []byte, input json.RawMessage) ([]byte, error) {
-	// Write WASM to a temp file
-	tmp, err := os.CreateTemp("", "openpool-*.wasm")
-	if err != nil {
-		return nil, fmt.Errorf("temp file: %w", err)
+// RunFile loads a module and runs it.
+func (r *Runtime) RunFile(ctx context.Context, wasmPath string, op int, n int) (json.RawMessage, error) {
+	if err := r.LoadModule(wasmPath); err != nil {
+		return nil, err
 	}
-	tmp.Write(wasmBytes)
-	tmp.Close()
-	defer os.Remove(tmp.Name())
-
-	return r.run(ctx, tmp.Name(), input)
+	return r.Run(ctx, op, n)
 }
 
-func (r *Runtime) run(ctx context.Context, wasmPath string, input json.RawMessage) ([]byte, error) {
-	if input == nil {
-		input = []byte("{}")
+// RunTask runs a task from JSON input.
+// Handles two formats:
+// 1. Flat: {"op":"fib","arg":30}
+// 2. Nested: {"input":{"op":"fib","arg":30}}
+func (r *Runtime) RunTask(ctx context.Context, wasmPath string, input json.RawMessage) (json.RawMessage, error) {
+	// Try flat format first
+	var ti TaskInput
+	if err := json.Unmarshal(input, &ti); err == nil && ti.Op != "" {
+		opID := OpToID(ti.Op)
+		if opID < 0 {
+			return nil, fmt.Errorf("unknown op: %s", ti.Op)
+		}
+		return r.RunFile(ctx, wasmPath, opID, ti.Arg)
 	}
-
-	// Write input to a temp file
-	inFile, err := os.CreateTemp("", "openpool-in-*.json")
-	if err != nil {
-		return nil, fmt.Errorf("input temp: %w", err)
+	
+	// Try nested format: {"input":{"op":"fib","arg":30}}
+	var nested struct {
+		Input TaskInput `json:"input"`
 	}
-	inFile.Write(input)
-	inFile.Close()
-	defer os.Remove(inFile.Name())
-
-	// Run wasmtime: wasmtime --dir . wasmPath inFile
-	cmd := exec.CommandContext(ctx, r.wasmtimePath,
-		"--dir", ".",
-		"--allow-precompiled",
-		wasmPath,
-		inFile.Name(),
-	)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-	if ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("execution timed out after 30s")
+	if err := json.Unmarshal(input, &nested); err != nil {
+		return nil, fmt.Errorf("parse input: %w", err)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("wasmtime error: %v | stderr: %s", err, stderr.String())
+	opID := OpToID(nested.Input.Op)
+	if opID < 0 {
+		return nil, fmt.Errorf("unknown op: %s", nested.Input.Op)
 	}
-
-	return bytes.TrimSpace(stdout.Bytes()), nil
+	return r.RunFile(ctx, wasmPath, opID, nested.Input.Arg)
 }
 
-// RunTest runs a built-in test WASM module that performs basic math.
-func (r *Runtime) RunTest() ([]byte, error) {
-	// Create a simple test using Python to compile a tiny WASM module
-	// This is the Phase 0 "hello world" of OpenPool: run Python, get result via WASM
-
-	// For Phase 0, we use a Python script compiled to WASM as the test task
-	// The WASM module does: fibonacci(20), matrix multiply 10x10, return results
-
-	testScript := `
-import json, sys
-
-def fib(n):
-    a, b = 0, 1
-    for _ in range(n):
-        a, b = b, a + b
-    return a
-
-def mat_mul(size=10):
-    # Simple 10x10 matrix multiplication
-    a = [[i*size+j for j in range(size)] for i in range(size)]
-    b = [[i+size*j for j in range(size)] for i in range(size)]
-    c = [[0]*size for _ in range(size)]
-    for i in range(size):
-        for j in range(size):
-            for k in range(size):
-                c[i][j] += a[i][k] * b[k][j]
-    return c
-
-result = {
-    "fib_20": fib(20),
-    "fib_30": fib(30),
-    "matrix_trace": sum(mat_mul(10)[i][i] for i in range(10)),
-    "node": "openpool-wasm",
-    "runtime": "python-compiled-wasm"
-}
-print(json.dumps(result))
-`
-
-	tmpPy, err := os.CreateTemp("", "openpool-test-*.py")
-	if err != nil {
-		return nil, fmt.Errorf("temp py: %w", err)
-	}
-	tmpPy.WriteString(testScript)
-	tmpPy.Close()
-	defer os.Remove(tmpPy.Name())
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "python3", tmpPy.Name())
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("Python test failed: %v | %s", err, string(out))
-	}
-
-	return bytes.TrimSpace(out), nil
-}
+// Version returns the wasmtime-go version.
+func (r *Runtime) Version() string { return "wasmtime-go v9" }

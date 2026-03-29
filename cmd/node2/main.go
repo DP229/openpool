@@ -18,9 +18,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dp229/openpool/pkg/executor"
 	"github.com/dp229/openpool/pkg/ledger"
 	"github.com/dp229/openpool/pkg/p2p"
 	"github.com/dp229/openpool/pkg/scheduler"
+	"github.com/dp229/openpool/pkg/wasm"
 )
 
 var (
@@ -38,6 +40,7 @@ var (
 	flagMaxPeers  = flag.Int("max-peers", 5, "Max peers to discover via DHT")
 	flagConnect   = flag.String("connect", "", "Connect to a peer multiaddr")
 	flagChunked  = flag.Int("chunked", 0, "Split task into N chunks across peers")
+	flagWASM    = flag.String("wasm", "", "WASM module path for local execution")
 )
 
 func main() {
@@ -262,9 +265,25 @@ func main() {
 		os.Exit(0)
 	}
 
+	// WASM executor (optional)
+	var exec *executor.Executor
+	if *flagWASM != "" {
+		r, err := wasm.New()
+		if err != nil {
+			log.Printf("WASM init error: %v", err)
+		} else {
+			if err := r.LoadModule(*flagWASM); err != nil {
+				log.Printf("WASM load error: %v", err)
+			} else {
+				exec = executor.New(r, db)
+				log.Printf("✓ WASM executor ready: %s", *flagWASM)
+			}
+		}
+	}
+
 	// HTTP API
 	if *flagHTTP > 0 {
-		go serveHTTP(node, db, *flagHTTP)
+		go serveHTTP(node, db, nodeID, exec, *flagHTTP)
 	}
 
 	// Wait for shutdown
@@ -355,7 +374,7 @@ func getFreeRAM() int {
 	return 0
 }
 
-func serveHTTP(node *p2p.Node, db *ledger.Ledger, port int) {
+func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.Executor, port int) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -395,6 +414,66 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, port int) {
 			"peer_count": len(peers),
 			"peers":      peers,
 		})
+	})
+
+	// Task execution endpoint
+	mux.HandleFunc("/submit", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", 405)
+			return
+		}
+		if exec == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "no WASM runtime"})
+			return
+		}
+		// Read raw JSON body
+		var rawReq json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&rawReq); err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		
+		// Parse for credits (optional)
+		var req struct {
+			Op        string `json:"op"`
+			Arg       int    `json:"arg"`
+			Credits   int    `json:"credits"`
+			TimeoutSec int   `json:"timeout_sec"`
+		}
+		if err := json.Unmarshal(rawReq, &req); err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		
+		timeoutSec := req.TimeoutSec
+		if timeoutSec == 0 {
+			timeoutSec = 30
+		}
+		
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+		defer cancel()
+		
+		// Create task with raw input
+		task := &executor.Task{
+			WASMPath:   *flagWASM,
+			RawInput:   rawReq,
+			TimeoutSec: timeoutSec,
+			Credits:    req.Credits,
+		}
+		
+		result, err := exec.Execute(ctx, task)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		
+		// Deduct credits
+		if task.Credits > 0 {
+			db.AddCredits(nodeID, -task.Credits)
+		}
+		
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "result": string(result), "credits_deducted": task.Credits})
 	})
 	fmt.Printf("🌐 HTTP API: http://localhost:%d/\n", port)
 	http.ListenAndServe(fmt.Sprintf(":%d", port), mux)

@@ -39,7 +39,8 @@ func (e *Executor) Execute(ctx context.Context, task *Task) (json.RawMessage, er
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	result, err := e.runtime.RunFile(task.WASMPath, task.Input)
+	// Use WASM path from task, pass raw JSON input
+	result, err := e.runtime.RunTask(ctx, task.WASMPath, task.RawInput)
 	if err != nil {
 		return nil, fmt.Errorf("execution failed: %w", err)
 	}
@@ -53,9 +54,9 @@ func (e *Executor) Execute(ctx context.Context, task *Task) (json.RawMessage, er
 }
 
 type Task struct {
-	ID         string          `json:"id"`
-	WASMPath   string          `json:"wasm_path"`
-	Input      json.RawMessage `json:"input"`
+	ID         string          `json:"-"`
+	WASMPath   string          `json:"-"`
+	RawInput   json.RawMessage `json:"-"`
 	TimeoutSec int             `json:"timeout_sec"`
 	Credits    int             `json:"credits"`
 }

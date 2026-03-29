@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -34,10 +36,11 @@ type Node struct {
 	tasks     map[string]*Task
 	taskChans map[string]chan *TaskResult
 
-	ctx        context.Context
-	cancel     context.CancelFunc
-	mu         sync.RWMutex
-	DHTClient  interface{ Bootstrap(ctx context.Context) error; Close() error; GetClosestPeers(ctx context.Context, key string) ([]peer.ID, error) } // kad-dht client (started lazily)
+	ctx            context.Context
+	cancel         context.CancelFunc
+	mu             sync.RWMutex
+	DHTClient      interface{ Bootstrap(ctx context.Context) error; Close() error; GetClosestPeers(ctx context.Context, key string) ([]peer.ID, error) } // kad-dht client (started lazily)
+	PeerstorePath  string  // Path to peerstore JSON file
 }
 
 // LedgerDB is the database interface.
@@ -58,10 +61,94 @@ func NewNode(ledger LedgerDB) *Node {
 	}
 }
 
+// SavePeerstore persists known peers to disk.
+func (n *Node) SavePeerstore() error {
+	if n.PeerstorePath == "" || n.Host == nil {
+		return nil
+	}
+	
+	type peerInfo struct {
+		ID       string   `json:"id"`
+		Addrs    []string `json:"addrs"`
+		LastSeen int64    `json:"last_seen"`
+	}
+	
+	var peers []peerInfo
+	for _, p := range n.Host.Network().Peers() {
+		addrs := n.Host.Peerstore().Addrs(p)
+		var addrStrs []string
+		for _, a := range addrs {
+			addrStrs = append(addrStrs, a.String())
+		}
+		if len(addrStrs) > 0 {
+			peers = append(peers, peerInfo{
+				ID:       p.String(),
+				Addrs:    addrStrs,
+				LastSeen: time.Now().Unix(),
+			})
+		}
+	}
+	
+	data, err := json.MarshalIndent(peers, "", "  ")
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(n.PeerstorePath, data, 0644)
+}
+
+// LoadPeerstore loads persisted peers from disk.
+func (n *Node) LoadPeerstore() ([]peer.AddrInfo, error) {
+	if n.PeerstorePath == "" {
+		return nil, nil
+	}
+	
+	data, err := ioutil.ReadFile(n.PeerstorePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	
+	type peerInfo struct {
+		ID       string   `json:"id"`
+		Addrs    []string `json:"addrs"`
+		LastSeen int64    `json:"last_seen"`
+	}
+	
+	var peers []peerInfo
+	if err := json.Unmarshal(data, &peers); err != nil {
+		return nil, err
+	}
+	
+	var result []peer.AddrInfo
+	for _, p := range peers {
+		pid, err := peer.Decode(p.ID)
+		if err != nil {
+			continue
+		}
+		var addrs []multiaddr.Multiaddr
+		for _, a := range p.Addrs {
+			m, err := multiaddr.NewMultiaddr(a)
+			if err != nil {
+				continue
+			}
+			addrs = append(addrs, m)
+		}
+		result = append(result, peer.AddrInfo{ID: pid, Addrs: addrs})
+	}
+	
+	log.Printf("[%s] loaded %d peers from peerstore", n.ID[:6], len(result))
+	return result, nil
+}
+
 // ── Listen ────────────────────────────────────────────────────────────────────
 
 // Listen starts the libp2p host with circuit relay NAT traversal.
 func (n *Node) Listen(port int) error {
+	// Load persisted peers first (but can't use them until host is up)
+	knownPeers, _ := n.LoadPeerstore()
+	
 	h, err := libp2p.New(
 		libp2p.Transport(tcp.NewTCPTransport),
 		libp2p.EnableRelay(),
@@ -73,6 +160,24 @@ func (n *Node) Listen(port int) error {
 
 	n.Host = h
 	h.SetStreamHandler(protocol.ID(ProtocolID), n.handleStream)
+
+	// Restore connections to known peers
+	for _, p := range knownPeers {
+		ctx, cancel := context.WithTimeout(n.ctx, 5*time.Second)
+		if err := n.Host.Connect(ctx, p); err != nil {
+			continue
+		}
+		log.Printf("[%s] restored peer %s", n.ID[:6], p.ID.String()[:8])
+		cancel()
+	}
+	
+	// Enable periodic peerstore save
+	go func() {
+		for {
+			time.Sleep(5 * time.Minute)
+			n.SavePeerstore()
+		}
+	}()
 
 	log.Printf("[%s] libp2p ready", n.ID[:6])
 	for _, addr := range h.Addrs() {

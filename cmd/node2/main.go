@@ -41,6 +41,7 @@ var (
 	flagConnect   = flag.String("connect", "", "Connect to a peer multiaddr")
 	flagChunked  = flag.Int("chunked", 0, "Split task into N chunks across peers")
 	flagWASM    = flag.String("wasm", "", "WASM module path for local execution")
+	flagPeerstore = flag.String("peerstore", "", "Path to peerstore JSON file for persistence")
 )
 
 func main() {
@@ -63,6 +64,7 @@ func main() {
 	// Create libp2p node
 	node := p2p.NewNode(db)
 	node.ID = nodeID
+	node.PeerstorePath = *flagPeerstore
 
 	if err := node.Listen(*flagPort); err != nil {
 		log.Fatal("Listen error:", err)

@@ -571,6 +571,18 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 	})
 	
 	addr := fmt.Sprintf(":%d", port)
+	
+	// Serve static UI files
+	fs := http.FileServer(http.Dir("ui"))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			fs.ServeHTTP(w, r)
+			return
+		}
+		// Check if file exists, otherwise serve index.html for SPA
+		http.ServeFile(w, r, "ui"+r.URL.Path)
+	})
+	
 	server := &http.Server{Addr: addr, Handler: mux}
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Printf("⚠ HTTP server error: %v\n", err)

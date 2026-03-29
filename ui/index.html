@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenPool Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    h1 { color: #58a6ff; margin-bottom: 8px; }
+    .subtitle { color: #8b949e; margin-bottom: 24px; }
+    
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 20px; }
+    .card h3 { color: #8b949e; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .card .value { font-size: 32px; font-weight: bold; color: #58a6ff; }
+    .card .value.green { color: #3fb950; }
+    .card .value.yellow { color: #d29922; }
+    .card .value.red { color: #f85149; }
+    
+    .row { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+    .btn { background: #238636; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    .btn:hover { background: #2ea043; }
+    .btn.secondary { background: #30363d; }
+    .btn.secondary:hover { background: #484f58; }
+    
+    textarea, input, select { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 10px; border-radius: 6px; width: 100%; font-family: monospace; }
+    textarea { min-height: 100px; resize: vertical; }
+    
+    .output { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 16px; min-height: 100px; max-height: 300px; overflow-y: auto; font-family: monospace; white-space: pre-wrap; font-size: 13px; }
+    
+    .peer-list { max-height: 200px; overflow-y: auto; }
+    .peer-item { background: #21262d; padding: 8px 12px; border-radius: 4px; margin-bottom: 4px; font-family: monospace; font-size: 12px; }
+    
+    .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+    .tab { background: #21262d; border: none; color: #8b949e; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+    .tab.active { background: #58a6ff; color: white; }
+    
+    .error { color: #f85149; background: rgba(248,81,73,0.1); padding: 12px; border-radius: 6px; margin-bottom: 16px; }
+    .success { color: #3fb950; background: rgba(63,185,80,0.1); padding: 12px; border-radius: 6px; margin-bottom: 16px; }
+    
+    .status-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #21262d; }
+    .status-row:last-child { border-bottom: none; }
+    .label { color: #8b949e; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🤖 OpenPool</h1>
+    <p class="subtitle">Distributed Computing Network Dashboard</p>
+    
+    <!-- Status Cards -->
+    <div class="grid">
+      <div class="card">
+        <h3>Node ID</h3>
+        <div class="value" id="nodeId" style="font-size: 14px;">Loading...</div>
+      </div>
+      <div class="card">
+        <h3>Credits</h3>
+        <div class="value green" id="credits">-</div>
+      </div>
+      <div class="card">
+        <h3>Connected Peers</h3>
+        <div class="value" id="peers">-</div>
+      </div>
+      <div class="card">
+        <h3>CPU Cores</h3>
+        <div class="value" id="cpu">-</div>
+      </div>
+    </div>
+    
+    <!-- Actions -->
+    <div class="row">
+      <button class="btn" onclick="refresh()">🔄 Refresh</button>
+      <button class="btn secondary" onclick="discover()">🔍 Discover Peers</button>
+      <button class="btn secondary" onclick="showLedger()">💰 View Ledger</button>
+    </div>
+    
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" onclick="showTab('run')">▶ Run Task</button>
+      <button class="tab" onclick="showTab('peers')">👥 Peers</button>
+      <button class="tab" onclick="showTab('connect')">🔗 Connect</button>
+    </div>
+    
+    <!-- Run Task Tab -->
+    <div id="tab-run" class="card">
+      <h3>Execute Task</h3>
+      <div style="display: grid; gap: 12px;">
+        <div>
+          <label class="label">Operation</label>
+          <select id="op">
+            <option value="fib">fib - Fibonacci</option>
+            <option value="sumFib">sumFib - Sum of Fibonacci</option>
+            <option value="sumSquares">sumSquares - Sum of Squares</option>
+            <option value="matrixTrace">matrixTrace - Matrix Trace</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Argument (n)</label>
+          <input type="number" id="arg" value="30" min="1" max="10000">
+        </div>
+        <button class="btn" onclick="runTask()">▶ Run</button>
+        <div class="output" id="result">Results will appear here...</div>
+      </div>
+    </div>
+    
+    <!-- Peers Tab -->
+    <div id="tab-peers" class="card" style="display:none">
+      <h3>Discovered Peers</h3>
+      <button class="btn secondary" onclick="discover()" style="margin-bottom:12px">🔍 Refresh</button>
+      <div class="peer-list" id="peerList">No peers discovered</div>
+    </div>
+    
+    <!-- Connect Tab -->
+    <div id="tab-connect" class="card" style="display:none">
+      <h3>Connect to Peer</h3>
+      <div style="display: grid; gap: 12px;">
+        <div>
+          <label class="label">Peer Multiaddr</label>
+          <input type="text" id="peerAddr" placeholder="/ip4/127.0.0.1/tcp/9000/p2p/Qm...">
+        </div>
+        <button class="btn" onclick="connectPeer()">🔗 Connect</button>
+        <div class="output" id="connectResult">Connection status...</div>
+      </div>
+    </div>
+    
+    <!-- Ledger Tab (Modal-ish) -->
+    <div id="tab-ledger" class="card" style="display:none">
+      <h3>Credit Ledger</h3>
+      <div class="output" id="ledgerData">Loading...</div>
+      <button class="btn secondary" onclick="showTab('run')" style="margin-top:12px">← Back</button>
+    </div>
+  </div>
+
+  <script>
+    const API = window.location.origin;
+    let currentTab = 'run';
+    
+    async function apiCall(endpoint, opts = {}) {
+      try {
+        const res = await fetch(API + endpoint, {
+          headers: { 'Content-Type': 'application/json' },
+          ...opts
+        });
+        return await res.json();
+      } catch (e) {
+        return { error: e.message };
+      }
+    }
+    
+    async function refresh() {
+      const status = await apiCall('/status');
+      if (status.error) {
+        showError('Failed to connect: ' + status.error);
+        return;
+      }
+      
+      document.getElementById('nodeId').textContent = status.node_id?.substring(0, 16) + '...';
+      document.getElementById('credits').textContent = status.credits ?? 0;
+      document.getElementById('peers').textContent = status.connected_peers ?? 0;
+      document.getElementById('cpu').textContent = status.cpu_cores ?? '-';
+      
+      clearError();
+    }
+    
+    async function runTask() {
+      const op = document.getElementById('op').value;
+      const arg = parseInt(document.getElementById('arg').value);
+      
+      document.getElementById('result').textContent = 'Running...';
+      
+      const res = await apiCall('/run', {
+        method: 'POST',
+        body: JSON.stringify({ op, arg })
+      });
+      
+      document.getElementById('result').textContent = JSON.stringify(res, null, 2);
+      
+      if (res.status === 'ok') {
+        showSuccess('Task completed in ' + (res.runtime || 'native'));
+      }
+    }
+    
+    async function discover() {
+      const res = await apiCall('/discover');
+      
+      const peerList = document.getElementById('peerList');
+      if (!res.peers || res.peers.length === 0) {
+        peerList.innerHTML = '<div class="peer-item">No peers found</div>';
+        return;
+      }
+      
+      peerList.innerHTML = res.peers.map(p => 
+        `<div class="peer-item">${typeof p === 'string' ? p : p.ID || p}</div>`
+      ).join('');
+    }
+    
+    async function connectPeer() {
+      const addr = document.getElementById('peerAddr').value;
+      if (!addr) {
+        showError('Please enter a peer address');
+        return;
+      }
+      
+      const res = await apiCall('/connect', {
+        method: 'POST',
+        body: JSON.stringify({ address: addr })
+      });
+      
+      document.getElementById('connectResult').textContent = JSON.stringify(res, null, 2);
+    }
+    
+    async function showLedger() {
+      const res = await apiCall('/ledger');
+      document.getElementById('ledgerData').textContent = JSON.stringify(res, null, 2);
+      showTab('ledger');
+    }
+    
+    function showTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('[id^="tab-"]').forEach(t => t.style.display = 'none');
+      
+      document.querySelectorAll('.tab')[tab === 'run' ? 0 : tab === 'peers' ? 1 : tab === 'connect' ? 2 : 3].classList.add('active');
+      document.getElementById('tab-' + tab).style.display = 'block';
+    }
+    
+    function showError(msg) {
+      const el = document.createElement('div');
+      el.className = 'error';
+      el.textContent = msg;
+      document.querySelector('.container').prepend(el);
+      setTimeout(() => el.remove(), 5000);
+    }
+    
+    function showSuccess(msg) {
+      const el = document.createElement('div');
+      el.className = 'success';
+      el.textContent = msg;
+      document.querySelector('.container').prepend(el);
+      setTimeout(() => el.remove(), 3000);
+    }
+    
+    function clearError() {
+      document.querySelectorAll('.error').forEach(e => e.remove());
+    }
+    
+    // Auto-refresh on load
+    refresh();
+  </script>
+</body>
+</html>

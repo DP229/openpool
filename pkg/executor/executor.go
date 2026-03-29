@@ -60,3 +60,8 @@ type Task struct {
 	TimeoutSec int             `json:"timeout_sec"`
 	Credits    int             `json:"credits"`
 }
+
+// Runtime returns the underlying WASM runtime.
+func (e *Executor) Runtime() *wasm.Runtime {
+	return e.runtime
+}

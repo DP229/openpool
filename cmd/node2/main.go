@@ -478,5 +478,68 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "result": string(result), "credits_deducted": task.Credits})
 	})
 	fmt.Printf("🌐 HTTP API: http://localhost:%d/\n", port)
-	http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
+	fmt.Printf("   Endpoints:\n")
+	fmt.Printf("   - GET  /status    - Node status\n")
+	fmt.Printf("   - GET  /ledger   - Credit ledger\n")
+	fmt.Printf("   - POST /connect  - Connect to peer\n")
+	fmt.Printf("   - GET  /discover - Discover peers\n")
+	fmt.Printf("   - POST /submit   - Submit task\n")
+	fmt.Printf("   - POST /run     - Run task locally (no P2P)\n")
+	
+	// Local task execution (for testing without P2P)
+	mux.HandleFunc("/run", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", 405)
+			return
+		}
+		
+		var req struct {
+			Op string `json:"op"`
+			Arg int   `json:"arg"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		
+		opID := wasm.OpToID(req.Op)
+		if opID < 0 {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "unknown op"})
+			return
+		}
+		
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		
+		// Use executor if available, otherwise create new runtime
+		var result []byte
+		var err error
+		
+		if exec != nil && exec.Runtime() != nil {
+			result, err = exec.Runtime().Run(ctx, opID, req.Arg)
+		} else {
+			// Create runtime on-the-fly
+			rt, err := wasm.New()
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+				return
+			}
+			defer rt.Close(ctx)
+			result, err = rt.Run(ctx, opID, req.Arg)
+		}
+		
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(result)
+	})
+	
+	addr := fmt.Sprintf(":%d", port)
+	server := &http.Server{Addr: addr, Handler: mux}
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Printf("⚠ HTTP server error: %v\n", err)
+	}
 }

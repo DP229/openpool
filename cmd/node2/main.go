@@ -494,8 +494,32 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 	fmt.Printf("   - GET  /discover - Discover peers\n")
 	fmt.Printf("   - POST /submit   - Submit task\n")
 	fmt.Printf("   - POST /run     - Run task locally (no P2P)\n")
+	fmt.Printf("   - GET  /verify  - Get verification history\n")
+	fmt.Printf("   - GET  /stats   - Node reliability stats\n")
 	
-	// Local task execution (for testing without P2P)
+	// Verification history endpoint
+	mux.HandleFunc("/verify", func(w http.ResponseWriter, r *http.Request) {
+		taskID := r.URL.Query().Get("task_id")
+		if taskID == "" {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "task_id required"})
+			return
+		}
+		// This would need verifier passed to serveHTTP - skip for now
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"task_id": taskID,
+			"status": "ok",
+			"note": "verification API needs verifier instance in serveHTTP"
+		})
+	})
+	
+	// Node stats endpoint
+	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"node_id": nodeID,
+			"verification": "enabled",
+			"note": "stats API needs verifier instance in serveHTTP"
+		})
+	})
 	mux.HandleFunc("/run", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST only", 405)

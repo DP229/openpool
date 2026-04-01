@@ -49,15 +49,35 @@ var (
 	flagMarket   = flag.Bool("market", false, "Enable task marketplace")
 	flagPrice    = flag.Int("price", 10, "Price per task (credits)")
 	flagGPU      = flag.Bool("gpu", false, "Enable GPU execution")
+	flagNodeID   = flag.String("node-id", "", "Node ID (auto-generated if not set)")
+	flagNodeIDFile = flag.String("node-id-file", "", "Path to persist node ID")
 )
 
 func main() {
 	flag.Parse()
 
-	// Node ID
-	idBytes := make([]byte, 8)
-	rand.Read(idBytes)
-	nodeID := hex.EncodeToString(idBytes)
+	nodeIDFile := *flagNodeIDFile
+	if nodeIDFile == "" && *flagLedger != "" {
+		nodeIDFile = *flagLedger + ".nodeid"
+	}
+
+	var nodeID string
+	if *flagNodeID != "" {
+		nodeID = *flagNodeID
+	} else if nodeIDFile != "" {
+		if data, err := os.ReadFile(nodeIDFile); err == nil {
+			nodeID = strings.TrimSpace(string(data))
+		}
+	}
+
+	if nodeID == "" {
+		idBytes := make([]byte, 8)
+		rand.Read(idBytes)
+		nodeID = hex.EncodeToString(idBytes)
+		if nodeIDFile != "" {
+			os.WriteFile(nodeIDFile, []byte(nodeID), 0600)
+		}
+	}
 	log.SetPrefix(fmt.Sprintf("[%s] ", nodeID[:6]))
 
 	// Ledger
@@ -65,8 +85,14 @@ func main() {
 	if err != nil {
 		log.Fatal("Ledger error:", err)
 	}
-	db.AddCredits(nodeID, *flagCredits)
-	fmt.Printf("✓ Ledger: %s | %d credits\n", nodeID[:6], *flagCredits)
+	
+	existingCredits := db.GetCredits(nodeID)
+	if existingCredits == 0 {
+		db.AddCredits(nodeID, *flagCredits)
+		fmt.Printf("✓ Ledger: %s | %d credits (initialized)\n", nodeID[:6], *flagCredits)
+	} else {
+		fmt.Printf("✓ Ledger: %s | %d credits\n", nodeID[:6], existingCredits)
+	}
 
 	// Create libp2p node
 	node := p2p.NewNode(db)

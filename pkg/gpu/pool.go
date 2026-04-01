@@ -242,11 +242,11 @@ func (p *Pool) executeFFT(ctx context.Context, input json.RawMessage) (json.RawM
 
 	// Bit-reversal permutation
 	for i := 0; i < N; i++ {
-		j := bitReverse(i, N)
-		if j > i {
-			realOut[i], realOut[j] = realOut[j], in.Real[i]
-			imagOut[i], imagOut[j] = imagOut[j], in.Imag[i]
-		} else {
+		j := bitReverse(i)
+		if j > i && j < N {
+			realOut[i], realOut[j] = in.Real[j], in.Real[i]
+			imagOut[i], imagOut[j] = in.Imag[j], in.Imag[i]
+		} else if j == i {
 			realOut[i] = in.Real[i]
 			imagOut[i] = in.Imag[i]
 		}
@@ -283,13 +283,13 @@ func (p *Pool) executeFFT(ctx context.Context, input json.RawMessage) (json.RawM
 	})
 }
 
-func bitReverse(n, N int) int {
+// Bit-reversal for FFT
+func bitReverse(n int) int {
 	result := 0
-	for i := 0; i < N; i++ {
-		result = (result << 1) | (n & 1)
-		n >>= 1
+	for i := n; i > 0; i >>= 1 {
+		result = (result << 1) | (i & 1)
 	}
-	return result >> 1
+	return result
 }
 
 // Close releases GPU resources.

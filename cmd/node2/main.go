@@ -299,28 +299,6 @@ func main() {
 		}
 	}
 
-	// Marketplace
-	var market *marketplace.Marketplace
-	if *flagMarket {
-		market, err = marketplace.New(*flagLedger, nodeID)
-		if err != nil {
-			log.Printf("⚠ Marketplace init error: %v", err)
-		} else {
-			// Register this node
-			multiaddr := ""
-			if len(node.Multiaddrs()) > 0 {
-				multiaddr = node.Multiaddrs()[0]
-			}
-			market.RegisterNode(marketplace.NodeInfo{
-				NodeID:      nodeID,
-				Multiaddr:   multiaddr,
-				PricePerTask: *flagPrice,
-				Status:      "online",
-			})
-			log.Printf("✓ Marketplace enabled (price: %d credits/task)", *flagPrice)
-		}
-	}
-
 	// GPU Execution
 	var gpupool *gpu.Pool
 	if *flagGPU {
@@ -333,6 +311,47 @@ func main() {
 			for _, d := range devs {
 				log.Printf("  - %s (%s, %dMB VRAM)", d.Name, d.Vendor, d.VRAMMB)
 			}
+		}
+	}
+
+	// Marketplace
+	var market *marketplace.Marketplace
+	if *flagMarket {
+		market, err = marketplace.New(*flagLedger, nodeID)
+		if err != nil {
+			log.Printf("⚠ Marketplace init error: %v", err)
+		} else {
+			// Register this node with capabilities
+			multiaddr := ""
+			if len(node.Multiaddrs()) > 0 {
+				multiaddr = node.Multiaddrs()[0]
+			}
+			
+			// Detect capabilities
+			caps := marketplace.NodeCapabilities{
+				CPUCores:    runtime.NumCPU(),
+				CPUArch:     runtime.GOARCH,
+				WASMEnabled: *flagWASM != "",
+			}
+			if *flagGPU && gpupool != nil && gpupool.IsEnabled() {
+				devs := gpupool.Devices()
+				if len(devs) > 0 {
+					caps.GPU = &marketplace.GPU{
+						Present: true,
+						Model:   devs[0].Name,
+						VRAMGB:  devs[0].VRAMMB / 1024,
+					}
+				}
+			}
+			
+			market.RegisterNode(marketplace.NodeInfo{
+				NodeID:       nodeID,
+				Multiaddr:    multiaddr,
+				Capabilities: caps,
+				PricePerTask: *flagPrice,
+				Status:       "online",
+			})
+			log.Printf("✓ Marketplace enabled (price: %d credits/task)", *flagPrice)
 		}
 	}
 

@@ -281,6 +281,7 @@ func main() {
 	if err != nil {
 		log.Printf("WASM init error: %v", err)
 	} else {
+		{
 		// Create verifier if enabled
 		var v *verification.Verifier
 		if *flagVerify {
@@ -295,6 +296,7 @@ func main() {
 		
 		exec = executor.New(r, db, v)
 		log.Printf("✓ WASM executor ready (native mode)")
+		}
 	}
 
 	// Marketplace
@@ -345,6 +347,7 @@ func main() {
 	<-sig
 	fmt.Println("■ Shutting down...")
 	node.Close()
+	}
 }
 
 // discoverPeers queries the DHT for peers and prints what it finds.
@@ -550,7 +553,7 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"task_id": taskID,
 			"status": "ok",
-			"note": "verification API needs verifier instance in serveHTTP"
+			"note":   "verification API needs verifier instance in serveHTTP",
 		})
 	})
 	

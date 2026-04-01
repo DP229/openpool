@@ -4,11 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
+	"database/sql"
 	_ "github.com/mattn/go-sqlite3"
 )
 

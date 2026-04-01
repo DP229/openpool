@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
-	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -164,7 +163,7 @@ func (v *Verifier) GetNodeScore(nodeID string) (float64, int, int, error) {
 	defer v.mu.RUnlock()
 
 	// Get total verifications and matching results
-	var total, matches int
+	var total, matches sql.NullInt64
 	err := v.db.QueryRow(`
 		SELECT COUNT(*), SUM(match) FROM verification 
 		WHERE primary_node = ? OR verifier_node = ?`, nodeID, nodeID).
@@ -173,19 +172,18 @@ func (v *Verifier) GetNodeScore(nodeID string) (float64, int, int, error) {
 		return 0, 0, 0, err
 	}
 
-	if total == 0 {
+	if !total.Valid || total.Int64 == 0 {
 		return 0.5, 0, 0, nil // Default score for new nodes
 	}
 
 	// Convert NULL matches to 0
-	if matches == 0 && total > 0 {
-		matches = 0
-	} else if matches == sql.NullInt64{}.Scan(0) { // handling NULL
-		matches = 0
+	matchCount := 0
+	if matches.Valid {
+		matchCount = int(matches.Int64)
 	}
 
-	score := float64(matches) / float64(total)
-	return score, matches, total, nil
+	score := float64(matchCount) / float64(total.Int64)
+	return score, matchCount, int(total.Int64), nil
 }
 
 // VerifyResult compares two results for consistency.

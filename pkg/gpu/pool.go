@@ -157,7 +157,6 @@ func (p *Pool) executeConv2D(ctx context.Context, input json.RawMessage) (json.R
 	// Simplified CPU fallback
 	h := len(in.Input)
 	w := len(in.Input[0])
-	c := len(in.Input[0][0])
 	kh := len(in.Kernel)
 	kw := len(in.Kernel[0])
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
@@ -97,8 +96,20 @@ func New(dbPath string, nodeID string) (*Marketplace, error) {
 			completed_at INTEGER
 		);
 		
+		CREATE TABLE IF NOT EXISTS bids (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			node_addr TEXT NOT NULL,
+			credits INTEGER NOT NULL,
+			eta_sec INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+		
 		CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 		CREATE INDEX IF NOT EXISTS idx_nodes_status ON nodes(status);
+		CREATE INDEX IF NOT EXISTS idx_bids_task ON bids(task_id);
+		CREATE INDEX IF NOT EXISTS idx_bids_node ON bids(node_id);
 	`)
 	if err != nil {
 		db.Close()
@@ -246,15 +257,24 @@ func (m *Marketplace) GetTasks(status string) ([]TaskListing, error) {
 	var tasks []TaskListing
 	for rows.Next() {
 		var t TaskListing
-		var inputStr, resultStr string
+		var inputStr string
+		var assignedTo, resultStr sql.NullString
+		var completedAt sql.NullInt64
 		err := rows.Scan(&t.TaskID, &t.Op, &inputStr, &t.Credits, &t.TimeoutSec,
-			&t.Status, &t.AssignedTo, &resultStr, &t.CreatedAt, &t.CompletedAt)
+			&t.Status, &assignedTo, &resultStr, &t.CreatedAt, &completedAt)
 		if err != nil {
 			return nil, err
 		}
 		t.Input = json.RawMessage(inputStr)
-		if resultStr != "" {
-			t.Result = json.RawMessage(resultStr)
+		if assignedTo.Valid {
+			t.AssignedTo = assignedTo.String
+		}
+		if resultStr.Valid && resultStr.String != "" {
+			t.Result = json.RawMessage(resultStr.String)
+		}
+		if completedAt.Valid {
+			ts := completedAt.Int64
+			t.CompletedAt = &ts
 		}
 		tasks = append(tasks, t)
 	}
@@ -267,18 +287,27 @@ func (m *Marketplace) GetTask(taskID string) (*TaskListing, error) {
 	defer m.mu.RUnlock()
 
 	var t TaskListing
-	var inputStr, resultStr string
+	var inputStr string
+	var assignedTo, resultStr sql.NullString
+	var completedAt sql.NullInt64
 	err := m.db.QueryRow(`
 		SELECT task_id, op, input, credits, timeout_sec, status, assigned_to, result, created_at, completed_at
 		FROM tasks WHERE task_id = ?`, taskID).
 		Scan(&t.TaskID, &t.Op, &inputStr, &t.Credits, &t.TimeoutSec,
-			&t.Status, &t.AssignedTo, &resultStr, &t.CreatedAt, &t.CompletedAt)
+			&t.Status, &assignedTo, &resultStr, &t.CreatedAt, &completedAt)
 	if err != nil {
 		return nil, err
 	}
 	t.Input = json.RawMessage(inputStr)
-	if resultStr != "" {
-		t.Result = json.RawMessage(resultStr)
+	if assignedTo.Valid {
+		t.AssignedTo = assignedTo.String
+	}
+	if resultStr.Valid && resultStr.String != "" {
+		t.Result = json.RawMessage(resultStr.String)
+	}
+	if completedAt.Valid {
+		ts := completedAt.Int64
+		t.CompletedAt = &ts
 	}
 	return &t, nil
 }
@@ -298,4 +327,28 @@ func (m *Marketplace) UpdateNodeStatus(nodeID, status string) error {
 // Close closes the marketplace.
 func (m *Marketplace) Close() error {
 	return m.db.Close()
+}
+
+// PlaceBid places a bid on a task (delegates to BiddingSystem).
+func (m *Marketplace) PlaceBid(ctx context.Context, taskID, nodeID, nodeAddr string, credits, etaSec int) (Bid, error) {
+	b := &BiddingSystem{db: m.db, nodeID: m.nodeID}
+	return b.PlaceBid(ctx, taskID, nodeID, nodeAddr, credits, etaSec)
+}
+
+// GetBidsForTask gets all bids for a task.
+func (m *Marketplace) GetBidsForTask(taskID string) ([]Bid, error) {
+	b := &BiddingSystem{db: m.db, nodeID: m.nodeID}
+	return b.GetBidsForTask(taskID)
+}
+
+// GetWinningBid gets the winning bid for a task.
+func (m *Marketplace) GetWinningBid(taskID string) (*Bid, error) {
+	b := &BiddingSystem{db: m.db, nodeID: m.nodeID}
+	return b.GetWinningBid(taskID)
+}
+
+// AutoMatch auto-matches a task to a bid.
+func (m *Marketplace) AutoMatch(taskID string) (*Bid, error) {
+	b := &BiddingSystem{db: m.db, nodeID: m.nodeID}
+	return b.AutoMatch(taskID)
 }

@@ -1,0 +1,67 @@
+===============================================
+DNS Configuration for Hostinger
+===============================================
+
+Login to Hostinger hPanel: https://hpanel.hostinger.com
+
+Navigate to: Domains > openpool.live > DNS Zone Editor
+
+Add the following A records:
+
++--------+------------+-------+---------------+
+| Type   | Name       | TTL   | Points to     |
++--------+------------+-------+---------------+
+| A      | @          | 14400 | 195.35.22.4   |
+| A      | www        | 14400 | 195.35.22.4   |
+| A      | api        | 14400 | 195.35.22.4   |
+| A      | dashboard  | 14400 | 195.35.22.4   |
+| A      | p2p        | 14400 | 195.35.22.4   |
++--------+------------+-------+---------------+
+
+Remove any existing conflicting records for these names.
+
+===============================================
+Verification
+===============================================
+
+After adding records, verify from your local machine:
+
+dig openpool.live +short
+dig api.openpool.live +short
+dig dashboard.openpool.live +short
+
+Should return: 195.35.22.4
+
+Propagation time: 5-60 minutes
+
+===============================================
+SSL Certificate (after DNS propagation)
+===============================================
+
+Once DNS is propagated, run on VPS:
+
+bash /opt/openpool/setup-ssl.sh
+
+Or manually:
+
+certbot certonly --standalone \
+  -d openpool.live \
+  -d www.openpool.live \
+  -d api.openpool.live \
+  -d dashboard.openpool.live
+
+===============================================
+Quick Test URLs
+===============================================
+
+HTTP (works immediately):
+  http://195.35.22.4:8080/status
+
+HTTPS (after DNS + SSL):
+  https://api.openpool.live/status
+  https://openpool.live/
+
+P2P Multiaddr:
+  /ip4/195.35.22.4/tcp/9000/p2p/<PEER_ID>
+
+Get peer ID from: http://195.35.22.4:8080/status

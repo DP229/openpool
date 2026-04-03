@@ -540,6 +540,20 @@ func getFreeRAM() int {
 	return 0
 }
 
+// toTrajSteps converts task.Steps to scoring.TrajSteps
+func toTrajSteps(steps []task.Step) []scoring.TrajStep {
+	result := make([]scoring.TrajStep, len(steps))
+	for i, s := range steps {
+		result[i] = scoring.TrajStep{
+			ID:        s.ID,
+			Timestamp: s.Timestamp,
+			Action:    s.Action,
+			Duration:  s.Duration,
+		}
+	}
+	return result
+}
+
 func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.Executor, v *verification.Verifier, port int, market *marketplace.Marketplace, gpupool *gpu.Pool, taskQueue *queue.WorkerPool, mc *metrics.Collector) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
@@ -1145,6 +1159,109 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 			"status":           "ok",
 			"result_size":      len(result),
 			"credits_deducted": req.Credits,
+		})
+	})
+
+	// AI Agent Task endpoint - specialized for agent tasks
+	mux.HandleFunc("/agent", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", 405)
+			return
+		}
+
+		var req struct {
+			Type        string          `json:"type"`        // agent_train, agent_eval, agent_optimize, etc.
+			Model       string          `json:"model"`       // llama3, mistral, etc.
+			Task        string          `json:"task"`        // Task description
+			Instruction string          `json:"instruction"`  // Agent instruction
+			Iterations  int             `json:"iterations"`  // For optimization loops
+			BatchSize   int             `json:"batch_size"`  // For batch tasks
+			MaxCredits  int             `json:"max_credits"` // Budget limit
+			Data        json.RawMessage `json:"data"`        // Training data, etc.
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+
+		// Validate task type
+		validTypes := map[string]bool{
+			"agent_train":     true,
+			"agent_eval":      true,
+			"agent_optimize":  true,
+			"agent_infer":     true,
+			"rlhf":           true,
+			"batch_infer":     true,
+		}
+
+		if !validTypes[req.Type] {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "invalid task type"})
+			return
+		}
+
+		// Build task input
+		taskInput := map[string]interface{}{
+			"type":        req.Type,
+			"model":       req.Model,
+			"task":        req.Task,
+			"instruction": req.Instruction,
+			"iterations":  req.Iterations,
+			"batch_size":  req.BatchSize,
+			"max_credits": req.MaxCredits,
+			"data":        req.Data,
+		}
+
+		inputJSON, _ := json.Marshal(taskInput)
+
+		// Use task registry
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		taskReg := task.Get()
+		result, err := taskReg.Execute(ctx, "agent", fmt.Sprintf("agent-%d", time.Now().Unix()), nodeID, inputJSON)
+
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "error",
+				"error":  err.Error(),
+			})
+			return
+		}
+
+		// Record metrics if available
+		if globalMetrics != nil {
+			globalMetrics.RecordTask(req.Type, result.Metrics.LatencyMs, result.Success, nodeID)
+			if result.Metrics.Score > 0 {
+				globalMetrics.RecordScore(nodeID, result.Metrics.Score)
+			}
+		}
+
+		// Record trajectory if available
+		if globalHistory != nil {
+			traj := scoring.Trajectory{
+				ID:          result.ID,
+				TaskType:    req.Type,
+				TaskInput:   req.Task,
+				Steps:       toTrajSteps(result.Metrics.Steps),
+				FinalScore:  result.Metrics.Score,
+				LatencyMs:  result.Metrics.LatencyMs,
+				CostCredits: result.Metrics.CostCredits,
+				NodeID:     nodeID,
+				Success:    result.Success,
+			}
+			globalHistory.Add(traj)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":    "ok",
+			"task_id":   result.ID,
+			"output":    string(result.Output),
+			"metrics":   result.Metrics,
+			"score":     result.Metrics.Score,
+			"latency_ms": result.Metrics.LatencyMs,
+			"cost":      result.Metrics.CostCredits,
 		})
 	})
 

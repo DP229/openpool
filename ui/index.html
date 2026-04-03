@@ -45,28 +45,28 @@
     .btn.secondary { background: #222; color: #fff; }
     .btn.secondary:hover { background: #333; }
     .btn.small { padding: 8px 16px; font-size: 12px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     
     input, select, textarea { background: #0a0a12; border: 1px solid #333; color: #fff; padding: 12px; border-radius: 8px; width: 100%; font-size: 14px; }
     input:focus, select:focus, textarea:focus { outline: none; border-color: #00d4ff; }
     
-    .output { background: #0a0a12; border: 1px solid #222; border-radius: 8px; padding: 16px; min-height: 80px; max-height: 200px; overflow-y: auto; font-family: 'Monaco', 'Menlo', monospace; font-size: 13px; white-space: pre-wrap; color: #00ff88; }
+    .output { background: #0a0a12; border: 1px solid #222; border-radius: 8px; padding: 16px; min-height: 80px; max-height: 300px; overflow-y: auto; font-family: 'Monaco', 'Menlo', monospace; font-size: 13px; white-space: pre-wrap; color: #00ff88; }
     
-    .peer-card { background: linear-gradient(145deg, #12121a, #0a0a12); border: 1px solid #222; border-radius: 12px; padding: 16px; }
-    .peer-card:hover { border-color: #00d4ff; }
-    .peer-card.connected { border-color: #00ff88; }
-    .peer-id { font-family: monospace; font-size: 12px; color: #00d4ff; word-break: break-all; }
-    .peer-status { font-size: 11px; padding: 3px 8px; border-radius: 12px; }
-    .peer-status.online { background: rgba(0,255,136,0.2); color: #00ff88; }
-    
-    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin: 32px 0; }
-    .feature { display: flex; gap: 16px; align-items: flex-start; }
-    .feature-icon { width: 48px; height: 48px; background: linear-gradient(135deg, rgba(0,212,255,0.2), rgba(123,47,255,0.2)); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; flex-shrink: 0; }
-    .feature h4 { color: #fff; margin-bottom: 4px; }
-    .feature p { color: #666; font-size: 13px; }
-    
-    .divider { border-top: 1px solid #222; margin: 32px 0; }
+    .agent-task-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+    .agent-task-card { background: linear-gradient(145deg, #1a1a2e, #12121a); border: 1px solid #333; border-radius: 12px; padding: 20px; cursor: pointer; transition: all 0.2s; }
+    .agent-task-card:hover { border-color: #00d4ff; transform: translateY(-2px); }
+    .agent-task-card .icon { font-size: 28px; margin-bottom: 8px; }
+    .agent-task-card h4 { color: #fff; margin-bottom: 4px; }
+    .agent-task-card p { color: #888; font-size: 12px; }
     
     .section-title { font-size: 20px; color: #fff; margin-bottom: 16px; }
+    .divider { border-top: 1px solid #222; margin: 32px 0; }
+    
+    .metric { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #222; }
+    .metric .label { color: #888; }
+    .metric .value { color: #fff; font-weight: 600; }
+    .metric .value.good { color: #00ff88; }
+    .metric .value.warning { color: #ff8800; }
     
     @media (max-width: 768px) {
       .hero h1 { font-size: 1.8rem; }
@@ -111,9 +111,10 @@
     <!-- Quick Actions -->
     <div class="tabs">
       <button class="tab active" onclick="showTab('dashboard')">📊 Dashboard</button>
-      <button class="tab" onclick="showTab('compute')">⚡ Run AI Task</button>
-      <button class="tab" onclick="showTab('nodes')">🌐 Find Nodes</button>
-      <button class="tab" onclick="showTab('earn')">💰 Earn Credits</button>
+      <button class="tab" onclick="showTab('agent')">🤖 AI Agent</button>
+      <button class="tab" onclick="showTab('compute')">⚡ Compute</button>
+      <button class="tab" onclick="showTab('nodes')">🌐 Network</button>
+      <button class="tab" onclick="showTab('earn')">💰 Earn</button>
     </div>
     
     <!-- Dashboard Tab -->
@@ -156,158 +157,134 @@
       <button class="btn" onclick="refresh()">🔄 Refresh Status</button>
     </div>
     
+    <!-- AI Agent Tab -->
+    <div id="tab-agent" style="display: none;">
+      <h3 class="section-title">🤖 AI Agent Tasks</h3>
+      <p style="color: #888; margin-bottom: 24px;">Choose an agent task type. Each task runs distributed across the network.</p>
+      
+      <!-- Agent Task Selection -->
+      <div class="agent-task-grid" style="margin-bottom: 24px;">
+        <div class="agent-task-card" onclick="selectAgentTask('agent_train')">
+          <div class="icon">🎯</div>
+          <h4>Agent Training</h4>
+          <p>Fine-tune autonomous agents on custom data</p>
+        </div>
+        <div class="agent-task-card" onclick="selectAgentTask('agent_eval')">
+          <div class="icon">📊</div>
+          <h4>Agent Evaluation</h4>
+          <p>Benchmark agent performance</p>
+        </div>
+        <div class="agent-task-card" onclick="selectAgentTask('agent_optimize')">
+          <div class="icon">⚡</div>
+          <h4>Agent Optimization</h4>
+          <p>AutoML-style self-improvement</p>
+        </div>
+        <div class="agent-task-card" onclick="selectAgentTask('agent_infer')">
+          <div class="icon">🚀</div>
+          <h4>Agent Inference</h4>
+          <p>Run agent on custom tasks</p>
+        </div>
+        <div class="agent-task-card" onclick="selectAgentTask('rlhf')">
+          <div class="icon">💬</div>
+          <h4>RLHF Training</h4>
+          <p>Reinforcement Learning from Human Feedback</p>
+        </div>
+        <div class="agent-task-card" onclick="selectAgentTask('batch_infer')">
+          <div class="icon">📦</div>
+          <h4>Batch Inference</h4>
+          <p>Process 1000+ samples in parallel</p>
+        </div>
+      </div>
+      
+      <!-- Agent Task Form -->
+      <div class="card" style="max-width: 700px;" id="agentForm" style="display: none;">
+        <h3 id="agentFormTitle">Agent Task</h3>
+        <div style="display: grid; gap: 16px; margin-top: 16px;">
+          <div>
+            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Model</label>
+            <select id="agentModel">
+              <option value="llama3">LLaMA 3 (8B)</option>
+              <option value="mistral">Mistral 7B</option>
+              <option value="mixtral">Mixtral 8x7B</option>
+              <option value="phi">Phi-3</option>
+            </select>
+          </div>
+          
+          <div id="taskInputGroup">
+            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Task Description</label>
+            <textarea id="agentTask" placeholder="Describe the task or paste agent config..." style="min-height: 100px;"></textarea>
+          </div>
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;" id="iterationsGroup">
+            <div>
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Iterations</label>
+              <input type="number" id="agentIterations" value="10" min="1">
+            </div>
+            <div id="batchGroup">
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Batch Size</label>
+              <input type="number" id="agentBatchSize" value="100" min="1">
+            </div>
+            <div>
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Max Credits</label>
+              <input type="number" id="agentCredits" value="50" min="1">
+            </div>
+          </div>
+          
+          <button class="btn" onclick="runAgentTask()">🚀 Submit to Network</button>
+          
+          <div class="output" id="agentResult">Agent task results will appear here...</div>
+        </div>
+      </div>
+      
+      <!-- Agent Metrics -->
+      <div class="card" style="margin-top: 24px;">
+        <h3>📈 Agent Performance</h3>
+        <div id="agentMetrics">
+          <div class="metric">
+            <span class="label">Avg Score</span>
+            <span class="value" id="avgScore">-</span>
+          </div>
+          <div class="metric">
+            <span class="label">Avg Latency</span>
+            <span class="value" id="avgLatency">-</span>
+          </div>
+          <div class="metric">
+            <span class="label">Tasks Completed</span>
+            <span class="value good" id="agentTasksCompleted">0</span>
+          </div>
+        </div>
+        <button class="btn secondary" style="margin-top: 16px;" onclick="loadAgentMetrics()">🔄 Refresh Metrics</button>
+      </div>
+    </div>
+    
     <!-- Compute Tab -->
     <div id="tab-compute" style="display: none;">
-      <h3 class="section-title">⚡ Run AI Task</h3>
-      <p style="color: #666; margin-bottom: 24px;">Select an AI task and let the distributed network handle it. A fraction of cloud pricing.</p>
-      
-      <!-- Task Categories -->
-      <div class="tabs" style="margin-bottom: 16px; border-bottom: none; padding-bottom: 0;">
-        <button class="tab active" onclick="showTaskCategory('agent')" id="tab-agent">🤖 AI Agents</button>
-        <button class="tab" onclick="showTaskCategory('llm')" id="tab-llm">🧠 LLM</button>
-        <button class="tab" onclick="showTaskCategory('media')" id="tab-media">🎨 Media</button>
-        <button class="tab" onclick="showTaskCategory('compute')" id="tab-compute2">🔢 Compute</button>
-      </div>
-      
-      <!-- AI Agent Tasks -->
-      <div id="task-agent" class="task-category">
-        <div class="card" style="max-width: 600px;">
-          <div style="display: grid; gap: 16px;">
-            <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Agent Task Type</label>
-              <select id="agentTaskType" onchange="updateAgentTask()">
-                <option value="agent_train">🎯 Agent Training (Fine-tune on data)</option>
-                <option value="agent_eval">📊 Agent Evaluation (Benchmark)</option>
-                <option value="agent_optimize">⚡ Agent Optimization (AutoML)</option>
-                <option value="agent_infer">🚀 Agent Inference (Run agent)</option>
-                <option value="rlhf">💬 RLHF Training (Human feedback)</option>
-                <option value="batch_infer">📦 Batch Inference (1000+ samples)</option>
-              </select>
-            </div>
-            
-            <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Task Description</label>
-              <textarea id="agentTaskDesc" placeholder="Describe the task or paste agent config..." style="min-height: 100px;"></textarea>
-            </div>
-            
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
-              <div>
-                <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Iterations</label>
-                <input type="number" id="agentIterations" value="100" min="1">
-              </div>
-              <div>
-                <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Batch Size</label>
-                <input type="number" id="agentBatchSize" value="32" min="1">
-              </div>
-              <div>
-                <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Max Credits</label>
-                <input type="number" id="agentCredits" value="100" min="1">
-              </div>
-            </div>
-            
-            <button class="btn" onclick="runAgentTask()">🚀 Submit Agent Task</button>
-            <div class="output" id="agentResult">Agent task results will appear here...</div>
+      <h3 class="section-title">⚡ Run Compute Task</h3>
+      <div class="card" style="max-width: 600px;">
+        <div style="display: grid; gap: 16px;">
+          <div>
+            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Task Type</label>
+            <select id="computeTask">
+              <option value="fib">Fibonacci</option>
+              <option value="sumFib">Sum of Fibonacci</option>
+              <option value="matrix">Matrix Operations</option>
+            </select>
           </div>
-        </div>
-        
-        <!-- Agent Task Info -->
-        <div class="card" style="max-width: 600px; margin-top: 16px; background: linear-gradient(145deg, #1a1a2e, #0a0a12);">
-          <h4 style="color: #00d4ff; margin-bottom: 12px;">🤖 AI Agent Tasks Explained</h4>
-          <div style="font-size: 13px; color: #888; display: grid; gap: 12px;">
-            <div><strong style="color: #fff;">Agent Training:</strong> Fine-tune autonomous agents (like AutoAgent) on custom data</div>
-            <div><strong style="color: #fff;">Agent Optimization:</strong> Self-improve agent prompts/tools via AutoML</div>
-            <div><strong style="color: #fff;">RLHF Training:</strong> Reinforcement Learning from Human Feedback</div>
-            <div><strong style="color: #fff;">Batch Inference:</strong> Run agent on 1000+ samples in parallel</div>
+          <div>
+            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Argument (n)</label>
+            <input type="number" id="computeArg" value="30" min="1">
           </div>
-        </div>
-      </div>
-      
-      <!-- LLM Tasks -->
-      <div id="task-llm" class="task-category" style="display: none;">
-        <div class="card" style="max-width: 600px;">
-          <div style="display: grid; gap: 16px;">
-            <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">LLM Task</label>
-              <select id="llmTaskType">
-                <option value="llm_infer">🧠 LLM Inference</option>
-                <option value="llm_complete">✍️ Text Completion</option>
-                <option value="llm_embed">📊 Embeddings</option>
-                <option value="llm_classify">🏷️ Classification</option>
-              </select>
-            </div>
-            <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Model</label>
-              <select id="llmModel">
-                <option value="llama3">LLaMA 3 (8B)</option>
-                <option value="mistral">Mistral 7B</option>
-                <option value="mixtral">Mixtral 8x7B</option>
-                <option value="phi">Phi-3</option>
-              </select>
-            </div>
-            <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Prompt</label>
-              <textarea id="llmPrompt" placeholder="Enter your prompt..." style="min-height: 100px;"></textarea>
-            </div>
-            <button class="btn" onclick="runLLMTask()">🚀 Run LLM</button>
-            <div class="output" id="llmResult">LLM results will appear here...</div>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Media Tasks -->
-      <div id="task-media" class="task-category" style="display: none;">
-        <div class="card" style="max-width: 600px;">
-          <div style="display: grid; gap: 16px;">
-            <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Media Task</label>
-              <select id="mediaTaskType">
-                <option value="sd_generate">🎨 Image Generation (Stable Diffusion)</option>
-                <option value="sd_upscale">🔍 Image Upscaling</option>
-                <option value="tts">🔊 Text to Speech</option>
-                <option value="video_process">🎬 Video Processing</option>
-              </select>
-            </div>
-            <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Prompt / Input</label>
-              <textarea id="mediaPrompt" placeholder="Describe what you want..." style="min-height: 80px;"></textarea>
-            </div>
-            <button class="btn" onclick="runMediaTask()">🚀 Generate</button>
-            <div class="output" id="mediaResult">Results will appear here...</div>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Compute Tasks -->
-      <div id="task-compute" class="task-category" style="display: none;">
-        <div class="card" style="max-width: 600px;">
-          <div style="display: grid; gap: 16px;">
-            <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Compute Task</label>
-              <select id="computeTaskType">
-                <option value="matrix_mul">🔢 Matrix Multiplication</option>
-                <option value="fft">📊 FFT (Signal Processing)</option>
-                <option value="conv2d">🖼️ 2D Convolution</option>
-                <option value="batch_process">📦 Batch Data Processing</option>
-              </select>
-            </div>
-            <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Size / Parameters</label>
-              <input type="number" id="computeSize" value="256" min="2">
-            </div>
-            <button class="btn" onclick="runComputeTask()">🚀 Run Compute</button>
-            <div class="output" id="computeResult">Results will appear here...</div>
-          </div>
+          <button class="btn" onclick="runComputeTask()">🚀 Run Task</button>
+          <div class="output" id="computeResult">Results will appear here...</div>
         </div>
       </div>
     </div>
     
-    <!-- Nodes Tab -->
+    <!-- Network Tab -->
     <div id="tab-nodes" style="display: none;">
       <div class="card" style="margin-bottom: 24px;">
         <h3>📡 Connect to Network</h3>
-        <p style="color: #888; margin-bottom: 16px;">Find available compute nodes in the network.</p>
-        
-        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+        <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px;">
           <input type="text" id="registryUrl" placeholder="Discovery server URL" value="https://openpool.live/api" style="flex: 1; min-width: 250px;">
           <button class="btn" onclick="connectToRegistry()">🔗 Connect</button>
           <button class="btn secondary" onclick="refreshNodes()">🔄 Refresh</button>
@@ -320,90 +297,20 @@
           <p>Click "Refresh" to discover nodes</p>
         </div>
       </div>
-      
-      <h3 class="section-title">🔗 My Connected Peers (<span id="connectedPeers">0</span>)</h3>
-      <div class="grid" id="peerGrid">
-        <div class="card" style="text-align: center; color: #666;">
-          <p>No peers connected yet</p>
-        </div>
-      </div>
     </div>
     
     <!-- Earn Tab -->
     <div id="tab-earn" style="display: none;">
       <h3 class="section-title">💰 Earn by Sharing Compute</h3>
-      <p style="color: #888; margin-bottom: 24px;">Turn your idle GPU into earning power. Run OpenPool node and earn credits for every task you process.</p>
-      
-      <div class="features">
-        <div class="feature">
-          <div class="feature-icon">🎮</div>
-          <div>
-            <h4>Share Your GPU</h4>
-            <p>Have an RTX 4090 or similar? Your gaming GPU sits idle 12+ hours a day. Let it earn.</p>
-          </div>
-        </div>
-        <div class="feature">
-          <div class="feature-icon">⚡</div>
-          <div>
-            <h4>Easy Setup</h4>
-            <p>Download, run one command, done. No complex configuration needed.</p>
-          </div>
-        </div>
-        <div class="feature">
-          <div class="feature-icon">🛡️</div>
-          <div>
-            <h4>Secure & Private</h4>
-            <p>Tasks run in isolated containers. Your data never leaves your machine.</p>
-          </div>
-        </div>
-        <div class="feature">
-          <div class="feature-icon">💸</div>
-          <div>
-            <h4>Earn Real Value</h4>
-            <p>Credits earned can be used for your own AI tasks or traded.</p>
-          </div>
-        </div>
-      </div>
-      
       <div class="card" style="max-width: 600px;">
-        <h3 style="margin-bottom: 16px;">🚀 Start Earning</h3>
-        <div style="display: grid; gap: 12px;">
-          <div style="background: #0a0a12; padding: 12px; border-radius: 8px; font-family: monospace;">
-            <div style="color: #666; font-size: 12px; margin-bottom: 4px;"># Download and run</div>
-            <div style="color: #00d4ff;">./openpool --http 8080 --registry https://openpool.live/api</div>
-          </div>
-          <div style="background: #0a0a12; padding: 12px; border-radius: 8px; font-family: monospace;">
-            <div style="color: #666; font-size: 12px; margin-bottom: 4px;"># With GPU enabled</div>
-            <div style="color: #00d4ff;">./openpool --http 8080 --gpu --registry https://openpool.live/api</div>
-          </div>
+        <h4 style="color: #00d4ff; margin-bottom: 12px;">🚀 Start Earning</h4>
+        <div style="background: #0a0a12; padding: 12px; border-radius: 8px; font-family: monospace; margin-bottom: 8px;">
+          <div style="color: #666; font-size: 12px; margin-bottom: 4px;"># Download and run</div>
+          <div style="color: #00d4ff;">./openpool --http 8080 --registry https://openpool.live/api</div>
         </div>
-      </div>
-    </div>
-    
-    <div class="divider"></div>
-    
-    <!-- How It Works -->
-    <h3 class="section-title">🔧 How It Works</h3>
-    <div class="features">
-      <div class="feature">
-        <div class="feature-icon">1️⃣</div>
-        <div>
-          <h4>Submit Task</h4>
-          <p>Choose your AI task, set your budget in credits.</p>
-        </div>
-      </div>
-      <div class="feature">
-        <div class="feature-icon">2️⃣</div>
-        <div>
-          <h4>Network Routes</h4>
-          <p>Task is routed to available nodes with matching capabilities.</p>
-        </div>
-      </div>
-      <div class="feature">
-        <div class="feature-icon">3️⃣</div>
-        <div>
-          <h4>Results Return</h4>
-          <p>Processed results delivered back to you securely.</p>
+        <div style="background: #0a0a12; padding: 12px; border-radius: 8px; font-family: monospace;">
+          <div style="color: #666; font-size: 12px; margin-bottom: 4px;"># With GPU enabled</div>
+          <div style="color: #00d4ff;">./openpool --http 8080 --gpu --registry https://openpool.live/api</div>
         </div>
       </div>
     </div>
@@ -413,7 +320,6 @@
     const API = window.location.origin;
     let currentTab = 'dashboard';
     let nodes = [];
-    let connectedPeers = [];
     
     async function apiCall(endpoint, opts = {}) {
       try {
@@ -430,28 +336,137 @@
     async function refresh() {
       const status = await apiCall('/status');
       if (status.error) {
-        console.log('Node not running or error:', status.error);
         document.getElementById('status').textContent = 'Offline';
         document.getElementById('status').style.color = '#ff4444';
         return;
       }
       
-      document.getElementById('nodeId').textContent = (status.node_id || 'Unknown').substring(0, 16) + '...';
+      document.getElementById('nodeId').textContent = (status.node_id || 'Unknown').substring(0, 20) + '...';
       document.getElementById('credits').textContent = status.credits ?? 0;
+      document.getElementById('peerCount').textContent = status.connected_peers ?? 0;
       document.getElementById('status').textContent = 'Online';
       document.getElementById('status').style.color = '#00ff88';
-      document.getElementById('peerCount').textContent = status.connected_peers ?? 0;
       
-      connectedPeers = status.peers || [];
-      document.getElementById('connectedPeers').textContent = connectedPeers.length;
-      renderConnectedPeers();
+      // Load agent metrics
+      loadAgentMetrics();
+    }
+    
+    async function loadAgentMetrics() {
+      const res = await apiCall('/metrics');
+      if (!res.error && res.task_metrics) {
+        let totalScore = 0, totalLatency = 0, totalTasks = 0;
+        res.task_metrics.forEach(t => {
+          if (t.type && t.type.startsWith('agent')) {
+            totalScore += t.avg_score || 0;
+            totalLatency += t.avg_latency_ms || 0;
+            totalTasks += t.count || 0;
+          }
+        });
+        document.getElementById('avgScore').textContent = totalTasks > 0 ? (totalScore / totalTasks).toFixed(2) : '-';
+        document.getElementById('avgLatency').textContent = totalTasks > 0 ? Math.round(totalLatency / totalTasks) + 'ms' : '-';
+        document.getElementById('agentTasksCompleted').textContent = totalTasks;
+      }
+    }
+    
+    let selectedAgentTask = '';
+    
+    function selectAgentTask(task) {
+      selectedAgentTask = task;
+      const form = document.getElementById('agentForm');
+      const title = document.getElementById('agentFormTitle');
+      
+      form.style.display = 'block';
+      
+      const taskInfo = {
+        'agent_train': { title: '🎯 Agent Training', iterations: true, batch: false },
+        'agent_eval': { title: '📊 Agent Evaluation', iterations: true, batch: true },
+        'agent_optimize': { title: '⚡ Agent Optimization', iterations: true, batch: false },
+        'agent_infer': { title: '🚀 Agent Inference', iterations: false, batch: false },
+        'rlhf': { title: '💬 RLHF Training', iterations: true, batch: false },
+        'batch_infer': { title: '📦 Batch Inference', iterations: false, batch: true }
+      };
+      
+      title.textContent = taskInfo[task].title;
+      document.getElementById('iterationsGroup').style.display = taskInfo[task].iterations ? 'grid' : 'none';
+      document.getElementById('batchGroup').style.display = taskInfo[task].batch ? 'block' : 'none';
+      
+      // Scroll to form
+      form.scrollIntoView({ behavior: 'smooth' });
+    }
+    
+    async function runAgentTask() {
+      if (!selectedAgentTask) {
+        alert('Select a task type first');
+        return;
+      }
+      
+      const model = document.getElementById('agentModel').value;
+      const task = document.getElementById('agentTask').value;
+      const iterations = parseInt(document.getElementById('agentIterations').value) || 10;
+      const batchSize = parseInt(document.getElementById('agentBatchSize').value) || 100;
+      const credits = parseInt(document.getElementById('agentCredits').value) || 50;
+      
+      const resultEl = document.getElementById('agentResult');
+      resultEl.textContent = '🤖 Submitting agent task to network...\n';
+      resultEl.textContent += `Task: ${selectedAgentTask}\nModel: ${model}`;
+      
+      try {
+        const res = await fetch(API + '/agent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: selectedAgentTask,
+            model: model,
+            task: task,
+            iterations: iterations,
+            batch_size: batchSize,
+            max_credits: credits
+          })
+        });
+        
+        const data = await res.json();
+        
+        if (data.error) {
+          resultEl.textContent = '❌ Error: ' + data.error;
+          return;
+        }
+        
+        resultEl.textContent = JSON.stringify(data, null, 2);
+        
+        if (data.score) {
+          resultEl.textContent += '\n\n✅ Task completed!';
+          document.getElementById('taskCount').textContent = parseInt(document.getElementById('taskCount').textContent) + 1;
+          loadAgentMetrics();
+        }
+      } catch (e) {
+        resultEl.textContent = '❌ Error: ' + e.message;
+      }
+    }
+    
+    async function runComputeTask() {
+      const taskType = document.getElementById('computeTask').value;
+      const arg = parseInt(document.getElementById('computeArg').value) || 30;
+      
+      const resultEl = document.getElementById('computeResult');
+      resultEl.textContent = 'Running...';
+      
+      const res = await apiCall('/run', {
+        method: 'POST',
+        body: JSON.stringify({ op: taskType, arg: arg })
+      });
+      
+      resultEl.textContent = JSON.stringify(res, null, 2);
+      
+      if (res.status === 'ok') {
+        document.getElementById('taskCount').textContent = parseInt(document.getElementById('taskCount').textContent) + 1;
+      }
     }
     
     async function refreshNodes() {
       const registryUrl = document.getElementById('registryUrl').value.trim();
       const grid = document.getElementById('nodeGrid');
       
-      grid.innerHTML = '<div class="card" style="text-align: center; color: #666;">🔍 Searching for nodes...</div>';
+      grid.innerHTML = '<div class="card" style="text-align: center; color: #666;">🔍 Searching...</div>';
       
       try {
         const res = await fetch(registryUrl + '/peers');
@@ -460,224 +475,55 @@
         
         document.getElementById('availableNodes').textContent = nodes.length;
         document.getElementById('nodeCount').textContent = nodes.length;
-        document.getElementById('gpuCount').textContent = nodes.filter(n => n.has_gpu).length;
         
         if (nodes.length === 0) {
-          grid.innerHTML = '<div class="card" style="text-align: center; color: #666;">No nodes available. Be the first to join!</div>';
+          grid.innerHTML = '<div class="card" style="text-align: center; color: #666;">No nodes available</div>';
           return;
         }
         
         grid.innerHTML = nodes.map((n, i) => `
-          <div class="peer-card">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-              <span class="peer-id">${n.id ? n.id.substring(0, 16) + '...' : 'Node ' + (i+1)}</span>
-              <span class="peer-status online">● Online</span>
-            </div>
-            <div style="display: grid; gap: 8px; font-size: 13px; color: #888;">
+          <div class="card">
+            <h4>${n.id ? n.id.substring(0, 16) + '...' : 'Node ' + (i+1)}</h4>
+            <div style="display: grid; gap: 8px; margin-top: 12px; font-size: 13px;">
               <div style="display: flex; justify-content: space-between;">
-                <span>CPU Cores:</span>
-                <span style="color: #fff;">${n.cpu_cores || '?'}</span>
+                <span style="color: #888;">CPU Cores</span>
+                <span>${n.cpu_cores || '?'}</span>
               </div>
               <div style="display: flex; justify-content: space-between;">
-                <span>GPU:</span>
+                <span style="color: #888;">GPU</span>
                 <span style="color: ${n.has_gpu ? '#00ff88' : '#888'};">${n.has_gpu ? '✅ Yes' : '❌ No'}</span>
               </div>
               <div style="display: flex; justify-content: space-between;">
-                <span>Location:</span>
-                <span style="color: #fff;">${n.country || 'Unknown'}</span>
-              </div>
-              <div style="display: flex; justify-content: space-between;">
-                <span>Price:</span>
+                <span style="color: #888;">Price</span>
                 <span style="color: #00d4ff;">${n.price || 10} credits</span>
               </div>
             </div>
             <button class="btn small" style="width: 100%; margin-top: 12px;" onclick="connectToNode('${n.multiaddr || ''}')">🔗 Connect</button>
           </div>
         `).join('');
-        
       } catch (e) {
-        grid.innerHTML = '<div class="card" style="text-align: center; color: #ff6666;">⚠️ Cannot connect to registry: ' + e.message + '</div>';
+        grid.innerHTML = '<div class="card" style="text-align: center; color: #ff6666;">⚠️ Error: ' + e.message + '</div>';
       }
     }
     
-    function connectToNode(multiaddr) {
-      if (!multiaddr) {
-        alert('No multiaddr available for this node');
-        return;
-      }
+    async function connectToNode(multiaddr) {
+      if (!multiaddr) return;
       
-      apiCall('/connect', {
+      const res = await apiCall('/connect', {
         method: 'POST',
         body: JSON.stringify({ address: multiaddr })
-      }).then(res => {
-        if (res.error) {
-          alert('Failed to connect: ' + res.error);
-        } else {
-          alert('Connected!');
-          refresh();
-        }
-      });
-    }
-    
-    async function connectToRegistry() {
-      await refreshNodes();
-    }
-    
-    function renderConnectedPeers() {
-      const grid = document.getElementById('peerGrid');
-      
-      if (connectedPeers.length === 0) {
-        grid.innerHTML = '<div class="card" style="text-align: center; color: #666;">No peers connected</div>';
-        return;
-      }
-      
-      grid.innerHTML = connectedPeers.map(p => {
-        const id = typeof p === 'string' ? p : (p.ID || p.id || p);
-        return `
-          <div class="peer-card connected">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span class="peer-id">${id.substring(0, 24)}...</span>
-              <span class="peer-status online">● Connected</span>
-            </div>
-          </div>
-        `;
-      }).join('');
-    }
-    
-    function showTaskCategory(category) {
-      // Update tab buttons
-      document.querySelectorAll('.task-category').forEach(el => el.style.display = 'none');
-      document.querySelectorAll('[id^="task-"]').forEach(el => el.style.display = 'none');
-      document.querySelectorAll('[id^="tab-"]').forEach(el => el.classList.remove('active'));
-      
-      document.getElementById('task-' + category).style.display = 'block';
-      const tabBtn = document.getElementById('tab-' + category);
-      if (tabBtn) tabBtn.classList.add('active');
-    }
-    
-    // AI Agent Tasks
-    async function runAgentTask() {
-      const taskType = document.getElementById('agentTaskType').value;
-      const desc = document.getElementById('agentTaskDesc').value;
-      const iterations = parseInt(document.getElementById('agentIterations').value);
-      const batchSize = parseInt(document.getElementById('agentBatchSize').value);
-      const credits = parseInt(document.getElementById('agentCredits').value);
-      
-      const resultEl = document.getElementById('agentResult');
-      resultEl.textContent = '🤖 Submitting agent task to network...\n';
-      resultEl.textContent += `Task: ${taskType}\nIterations: ${iterations}\nBatch: ${batchSize}`;
-      
-      // Build agent task payload
-      const task = {
-        type: 'agent',
-        agent_task: taskType,
-        description: desc,
-        iterations: iterations,
-        batch_size: batchSize,
-        max_credits: credits,
-        timestamp: Date.now()
-      };
-      
-      // Route to network
-      const res = await apiCall('/run', {
-        method: 'POST',
-        body: JSON.stringify({ 
-          op: 'agent_task',
-          arg: JSON.stringify(task)
-        })
       });
       
-      resultEl.textContent = JSON.stringify({ ...task, result: res }, null, 2);
-      
-      if (res.status === 'ok') {
-        document.getElementById('taskCount').textContent = parseInt(document.getElementById('taskCount').textContent) + 1;
-        resultEl.textContent += '\n✅ Agent task completed!';
+      if (!res.error) {
+        alert('Connected!');
+        refresh();
+      } else {
+        alert('Failed: ' + res.error);
       }
     }
     
-    function updateAgentTask() {
-      const taskType = document.getElementById('agentTaskType').value;
-      const descField = document.getElementById('agentTaskDesc');
-      
-      // Auto-fill descriptions based on task type
-      const descs = {
-        'agent_train': 'Describe the agent to train and training data...',
-        'agent_eval': 'Describe the evaluation benchmark and agent...',
-        'agent_optimize': 'Describe the agent config to optimize...',
-        'agent_infer': 'Describe the task for the agent...',
-        'rlhf': 'Describe the reward model and training data...',
-        'batch_infer': 'Describe the batch data and agent...'
-      };
-      descField.placeholder = descs[taskType] || 'Describe the task...';
-    }
-    
-    // LLM Tasks
-    async function runLLMTask() {
-      const model = document.getElementById('llmModel').value;
-      const prompt = document.getElementById('llmPrompt').value;
-      
-      const resultEl = document.getElementById('llmResult');
-      resultEl.textContent = `🧠 Running ${model} inference...`;
-      
-      const res = await apiCall('/run', {
-        method: 'POST',
-        body: JSON.stringify({ 
-          op: 'llm',
-          arg: JSON.stringify({ model, prompt })
-        })
-      });
-      
-      resultEl.textContent = JSON.stringify(res, null, 2);
-      
-      if (res.status === 'ok') {
-        document.getElementById('taskCount').textContent = parseInt(document.getElementById('taskCount').textContent) + 1;
-      }
-    }
-    
-    // Media Tasks
-    async function runMediaTask() {
-      const taskType = document.getElementById('mediaTaskType').value;
-      const prompt = document.getElementById('mediaPrompt').value;
-      
-      const resultEl = document.getElementById('mediaResult');
-      resultEl.textContent = `🎨 Generating...`;
-      
-      const res = await apiCall('/run', {
-        method: 'POST',
-        body: JSON.stringify({ 
-          op: taskType,
-          arg: JSON.stringify({ prompt })
-        })
-      });
-      
-      resultEl.textContent = JSON.stringify(res, null, 2);
-      
-      if (res.status === 'ok') {
-        document.getElementById('taskCount').textContent = parseInt(document.getElementById('taskCount').textContent) + 1;
-      }
-    }
-    
-    // Compute Tasks
-    async function runComputeTask() {
-      const taskType = document.getElementById('computeTaskType').value;
-      const size = parseInt(document.getElementById('computeSize').value);
-      
-      const resultEl = document.getElementById('computeResult');
-      resultEl.textContent = `🔢 Processing ${size}x${size} ${taskType}...`;
-      
-      const res = await apiCall('/run', {
-        method: 'POST',
-        body: JSON.stringify({ 
-          op: taskType,
-          arg: size
-        })
-      });
-      
-      resultEl.textContent = JSON.stringify(res, null, 2);
-      
-      if (res.status === 'ok') {
-        document.getElementById('taskCount').textContent = parseInt(document.getElementById('taskCount').textContent) + 1;
-      }
+    function connectToRegistry() {
+      refreshNodes();
     }
     
     function showTab(tab) {
@@ -685,17 +531,13 @@
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('[id^="tab-"]').forEach(t => t.style.display = 'none');
       
-      const tabEl = document.getElementById('tab-' + tab);
-      if (tabEl) tabEl.style.display = 'block';
-      
+      document.getElementById('tab-' + tab).style.display = 'block';
       const tabs = document.querySelectorAll('.tab');
-      const tabIndex = { dashboard: 0, compute: 1, nodes: 2, earn: 3 };
-      if (tabs[tabIndex[tab]]) tabs[tabIndex[tab]].classList.add('active');
+      const tabIndex = { dashboard: 0, agent: 1, compute: 2, nodes: 3, earn: 4 };
+      tabs[tabIndex[tab]].classList.add('active');
       
-      // Refresh data when switching tabs
-      if (tab === 'nodes') {
-        refreshNodes();
-      }
+      if (tab === 'nodes') refreshNodes();
+      if (tab === 'agent') loadAgentMetrics();
     }
     
     // Initialize

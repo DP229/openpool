@@ -159,44 +159,144 @@
     <!-- Compute Tab -->
     <div id="tab-compute" style="display: none;">
       <h3 class="section-title">⚡ Run AI Task</h3>
-      <p style="color: #666; margin-bottom: 24px;">Select an AI task and let the network handle it. Costs a fraction of cloud pricing.</p>
+      <p style="color: #666; margin-bottom: 24px;">Select an AI task and let the distributed network handle it. A fraction of cloud pricing.</p>
       
-      <div class="card" style="max-width: 600px;">
-        <div style="display: grid; gap: 16px;">
-          <div>
-            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Task Type</label>
-            <select id="taskType">
-              <option value="llm">🧠 LLM Inference (LLaMA, Mistral)</option>
-              <option value="stable_diffusion">🎨 Image Generation (Stable Diffusion)</option>
-              <option value="text_to_speech">🔊 Text to Speech</option>
-              <option value="batch_process">📊 Batch Data Processing</option>
-              <option value="matrix">🔢 Matrix Computation</option>
-            </select>
-          </div>
-          
-          <div>
-            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Prompt / Input</label>
-            <textarea id="taskPrompt" placeholder="Enter your prompt or data..." style="min-height: 100px;"></textarea>
-          </div>
-          
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+      <!-- Task Categories -->
+      <div class="tabs" style="margin-bottom: 16px; border-bottom: none; padding-bottom: 0;">
+        <button class="tab active" onclick="showTaskCategory('agent')" id="tab-agent">🤖 AI Agents</button>
+        <button class="tab" onclick="showTaskCategory('llm')" id="tab-llm">🧠 LLM</button>
+        <button class="tab" onclick="showTaskCategory('media')" id="tab-media">🎨 Media</button>
+        <button class="tab" onclick="showTaskCategory('compute')" id="tab-compute2">🔢 Compute</button>
+      </div>
+      
+      <!-- AI Agent Tasks -->
+      <div id="task-agent" class="task-category">
+        <div class="card" style="max-width: 600px;">
+          <div style="display: grid; gap: 16px;">
             <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Quality</label>
-              <select id="taskQuality">
-                <option value="fast">⚡ Fast (Lower quality)</option>
-                <option value="balanced" selected>⚖️ Balanced</option>
-                <option value="quality">✨ High Quality</option>
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Agent Task Type</label>
+              <select id="agentTaskType" onchange="updateAgentTask()">
+                <option value="agent_train">🎯 Agent Training (Fine-tune on data)</option>
+                <option value="agent_eval">📊 Agent Evaluation (Benchmark)</option>
+                <option value="agent_optimize">⚡ Agent Optimization (AutoML)</option>
+                <option value="agent_infer">🚀 Agent Inference (Run agent)</option>
+                <option value="rlhf">💬 RLHF Training (Human feedback)</option>
+                <option value="batch_infer">📦 Batch Inference (1000+ samples)</option>
+              </select>
+            </div>
+            
+            <div>
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Task Description</label>
+              <textarea id="agentTaskDesc" placeholder="Describe the task or paste agent config..." style="min-height: 100px;"></textarea>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+              <div>
+                <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Iterations</label>
+                <input type="number" id="agentIterations" value="100" min="1">
+              </div>
+              <div>
+                <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Batch Size</label>
+                <input type="number" id="agentBatchSize" value="32" min="1">
+              </div>
+              <div>
+                <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Max Credits</label>
+                <input type="number" id="agentCredits" value="100" min="1">
+              </div>
+            </div>
+            
+            <button class="btn" onclick="runAgentTask()">🚀 Submit Agent Task</button>
+            <div class="output" id="agentResult">Agent task results will appear here...</div>
+          </div>
+        </div>
+        
+        <!-- Agent Task Info -->
+        <div class="card" style="max-width: 600px; margin-top: 16px; background: linear-gradient(145deg, #1a1a2e, #0a0a12);">
+          <h4 style="color: #00d4ff; margin-bottom: 12px;">🤖 AI Agent Tasks Explained</h4>
+          <div style="font-size: 13px; color: #888; display: grid; gap: 12px;">
+            <div><strong style="color: #fff;">Agent Training:</strong> Fine-tune autonomous agents (like AutoAgent) on custom data</div>
+            <div><strong style="color: #fff;">Agent Optimization:</strong> Self-improve agent prompts/tools via AutoML</div>
+            <div><strong style="color: #fff;">RLHF Training:</strong> Reinforcement Learning from Human Feedback</div>
+            <div><strong style="color: #fff;">Batch Inference:</strong> Run agent on 1000+ samples in parallel</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- LLM Tasks -->
+      <div id="task-llm" class="task-category" style="display: none;">
+        <div class="card" style="max-width: 600px;">
+          <div style="display: grid; gap: 16px;">
+            <div>
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">LLM Task</label>
+              <select id="llmTaskType">
+                <option value="llm_infer">🧠 LLM Inference</option>
+                <option value="llm_complete">✍️ Text Completion</option>
+                <option value="llm_embed">📊 Embeddings</option>
+                <option value="llm_classify">🏷️ Classification</option>
               </select>
             </div>
             <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Max Cost (Credits)</label>
-              <input type="number" id="maxCost" value="50" min="1">
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Model</label>
+              <select id="llmModel">
+                <option value="llama3">LLaMA 3 (8B)</option>
+                <option value="mistral">Mistral 7B</option>
+                <option value="mixtral">Mixtral 8x7B</option>
+                <option value="phi">Phi-3</option>
+              </select>
             </div>
+            <div>
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Prompt</label>
+              <textarea id="llmPrompt" placeholder="Enter your prompt..." style="min-height: 100px;"></textarea>
+            </div>
+            <button class="btn" onclick="runLLMTask()">🚀 Run LLM</button>
+            <div class="output" id="llmResult">LLM results will appear here...</div>
           </div>
-          
-          <button class="btn" onclick="runTask()">🚀 Submit to Network</button>
-          
-          <div class="output" id="taskResult">Results will appear here...</div>
+        </div>
+      </div>
+      
+      <!-- Media Tasks -->
+      <div id="task-media" class="task-category" style="display: none;">
+        <div class="card" style="max-width: 600px;">
+          <div style="display: grid; gap: 16px;">
+            <div>
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Media Task</label>
+              <select id="mediaTaskType">
+                <option value="sd_generate">🎨 Image Generation (Stable Diffusion)</option>
+                <option value="sd_upscale">🔍 Image Upscaling</option>
+                <option value="tts">🔊 Text to Speech</option>
+                <option value="video_process">🎬 Video Processing</option>
+              </select>
+            </div>
+            <div>
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Prompt / Input</label>
+              <textarea id="mediaPrompt" placeholder="Describe what you want..." style="min-height: 80px;"></textarea>
+            </div>
+            <button class="btn" onclick="runMediaTask()">🚀 Generate</button>
+            <div class="output" id="mediaResult">Results will appear here...</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Compute Tasks -->
+      <div id="task-compute" class="task-category" style="display: none;">
+        <div class="card" style="max-width: 600px;">
+          <div style="display: grid; gap: 16px;">
+            <div>
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Compute Task</label>
+              <select id="computeTaskType">
+                <option value="matrix_mul">🔢 Matrix Multiplication</option>
+                <option value="fft">📊 FFT (Signal Processing)</option>
+                <option value="conv2d">🖼️ 2D Convolution</option>
+                <option value="batch_process">📦 Batch Data Processing</option>
+              </select>
+            </div>
+            <div>
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Size / Parameters</label>
+              <input type="number" id="computeSize" value="256" min="2">
+            </div>
+            <button class="btn" onclick="runComputeTask()">🚀 Run Compute</button>
+            <div class="output" id="computeResult">Results will appear here...</div>
+          </div>
         </div>
       </div>
     </div>
@@ -444,30 +544,136 @@
       }).join('');
     }
     
-    async function runTask() {
-      const taskType = document.getElementById('taskType').value;
-      const prompt = document.getElementById('taskPrompt').value;
+    function showTaskCategory(category) {
+      // Update tab buttons
+      document.querySelectorAll('.task-category').forEach(el => el.style.display = 'none');
+      document.querySelectorAll('[id^="task-"]').forEach(el => el.style.display = 'none');
+      document.querySelectorAll('[id^="tab-"]').forEach(el => el.classList.remove('active'));
       
-      document.getElementById('taskResult').textContent = 'Submitting to network...';
+      document.getElementById('task-' + category).style.display = 'block';
+      const tabBtn = document.getElementById('tab-' + category);
+      if (tabBtn) tabBtn.classList.add('active');
+    }
+    
+    // AI Agent Tasks
+    async function runAgentTask() {
+      const taskType = document.getElementById('agentTaskType').value;
+      const desc = document.getElementById('agentTaskDesc').value;
+      const iterations = parseInt(document.getElementById('agentIterations').value);
+      const batchSize = parseInt(document.getElementById('agentBatchSize').value);
+      const credits = parseInt(document.getElementById('agentCredits').value);
       
-      // Map task types to operations
-      const opMap = {
-        llm: 'fib',
-        stable_diffusion: 'sumFib',
-        text_to_speech: 'sumSquares',
-        batch_process: 'matrixTrace',
-        matrix: 'fib'
+      const resultEl = document.getElementById('agentResult');
+      resultEl.textContent = '🤖 Submitting agent task to network...\n';
+      resultEl.textContent += `Task: ${taskType}\nIterations: ${iterations}\nBatch: ${batchSize}`;
+      
+      // Build agent task payload
+      const task = {
+        type: 'agent',
+        agent_task: taskType,
+        description: desc,
+        iterations: iterations,
+        batch_size: batchSize,
+        max_credits: credits,
+        timestamp: Date.now()
       };
+      
+      // Route to network
+      const res = await apiCall('/run', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          op: 'agent_task',
+          arg: JSON.stringify(task)
+        })
+      });
+      
+      resultEl.textContent = JSON.stringify({ ...task, result: res }, null, 2);
+      
+      if (res.status === 'ok') {
+        document.getElementById('taskCount').textContent = parseInt(document.getElementById('taskCount').textContent) + 1;
+        resultEl.textContent += '\n✅ Agent task completed!';
+      }
+    }
+    
+    function updateAgentTask() {
+      const taskType = document.getElementById('agentTaskType').value;
+      const descField = document.getElementById('agentTaskDesc');
+      
+      // Auto-fill descriptions based on task type
+      const descs = {
+        'agent_train': 'Describe the agent to train and training data...',
+        'agent_eval': 'Describe the evaluation benchmark and agent...',
+        'agent_optimize': 'Describe the agent config to optimize...',
+        'agent_infer': 'Describe the task for the agent...',
+        'rlhf': 'Describe the reward model and training data...',
+        'batch_infer': 'Describe the batch data and agent...'
+      };
+      descField.placeholder = descs[taskType] || 'Describe the task...';
+    }
+    
+    // LLM Tasks
+    async function runLLMTask() {
+      const model = document.getElementById('llmModel').value;
+      const prompt = document.getElementById('llmPrompt').value;
+      
+      const resultEl = document.getElementById('llmResult');
+      resultEl.textContent = `🧠 Running ${model} inference...`;
       
       const res = await apiCall('/run', {
         method: 'POST',
         body: JSON.stringify({ 
-          op: opMap[taskType] || 'fib', 
-          arg: 30 
+          op: 'llm',
+          arg: JSON.stringify({ model, prompt })
         })
       });
       
-      document.getElementById('taskResult').textContent = JSON.stringify(res, null, 2);
+      resultEl.textContent = JSON.stringify(res, null, 2);
+      
+      if (res.status === 'ok') {
+        document.getElementById('taskCount').textContent = parseInt(document.getElementById('taskCount').textContent) + 1;
+      }
+    }
+    
+    // Media Tasks
+    async function runMediaTask() {
+      const taskType = document.getElementById('mediaTaskType').value;
+      const prompt = document.getElementById('mediaPrompt').value;
+      
+      const resultEl = document.getElementById('mediaResult');
+      resultEl.textContent = `🎨 Generating...`;
+      
+      const res = await apiCall('/run', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          op: taskType,
+          arg: JSON.stringify({ prompt })
+        })
+      });
+      
+      resultEl.textContent = JSON.stringify(res, null, 2);
+      
+      if (res.status === 'ok') {
+        document.getElementById('taskCount').textContent = parseInt(document.getElementById('taskCount').textContent) + 1;
+      }
+    }
+    
+    // Compute Tasks
+    async function runComputeTask() {
+      const taskType = document.getElementById('computeTaskType').value;
+      const size = parseInt(document.getElementById('computeSize').value);
+      
+      const resultEl = document.getElementById('computeResult');
+      resultEl.textContent = `🔢 Processing ${size}x${size} ${taskType}...`;
+      
+      const res = await apiCall('/run', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          op: taskType,
+          arg: size
+        })
+      });
+      
+      resultEl.textContent = JSON.stringify(res, null, 2);
       
       if (res.status === 'ok') {
         document.getElementById('taskCount').textContent = parseInt(document.getElementById('taskCount').textContent) + 1;

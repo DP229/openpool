@@ -27,6 +27,7 @@ import (
 	"github.com/dp229/openpool/pkg/p2p"
 	"github.com/dp229/openpool/pkg/queue"
 	"github.com/dp229/openpool/pkg/scheduler"
+	"github.com/dp229/openpool/pkg/scheduler/scoring"
 	"github.com/dp229/openpool/pkg/task"
 	"github.com/dp229/openpool/pkg/task/handlers"
 	"github.com/dp229/openpool/pkg/verification"
@@ -57,6 +58,13 @@ var (
 	flagNodeID     = flag.String("node-id", "", "Node ID (auto-generated if not set)")
 	flagNodeIDFile = flag.String("node-id-file", "", "Path to persist node ID")
 	flagRegistry   = flag.String("registry", "", "Registry server URL for peer discovery (e.g., https://openpool.live/api)")
+)
+
+// Scoring globals
+var (
+	globalMetrics *scoring.MetricsCollector
+	globalRouter *scoring.Router
+	globalHistory *scoring.TaskHistory
 )
 
 func main() {
@@ -438,6 +446,12 @@ func main() {
 	handlers.Init()
 	fmt.Printf("✓ Task handlers ready: %v\n", handlers.List())
 
+	// Initialize scoring system
+	globalMetrics = scoring.NewMetricsCollector()
+	globalRouter = scoring.NewRouter(globalMetrics)
+	globalHistory = scoring.NewTaskHistory(1000)
+	fmt.Printf("✓ Scoring system ready\n")
+
 	// Wait for shutdown
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -711,6 +725,101 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 			"node_id":         nodeID,
 			"marketplace":     "enabled",
 			"available_nodes": len(nodes),
+		})
+	})
+
+	// Scoring - Metrics endpoint
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		if globalMetrics == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "scoring not initialized"})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"task_metrics": globalMetrics.GetTaskMetricsAll(),
+			"node_stats":   globalMetrics.GetAllNodeStats(),
+		})
+	})
+
+	// Scoring - Node reliability endpoint
+	mux.HandleFunc("/reliability", func(w http.ResponseWriter, r *http.Request) {
+		if globalMetrics == nil || globalRouter == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "scoring not initialized"})
+			return
+		}
+		
+		nodeID := r.URL.Query().Get("node_id")
+		if nodeID == "" {
+			// Return all nodes
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"nodes": globalRouter.ListNodes(),
+			})
+			return
+		}
+		
+		rel := globalMetrics.CalculateReliability(nodeID)
+		node := globalRouter.GetNode(nodeID)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"node_id": nodeID,
+			"reliability": rel,
+			"node": node,
+		})
+	})
+
+	// Scoring - Best node for task
+	mux.HandleFunc("/best-node", func(w http.ResponseWriter, r *http.Request) {
+		if globalRouter == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "scoring not initialized"})
+			return
+		}
+		
+		taskType := r.URL.Query().Get("type")
+		requireGPU := r.URL.Query().Get("gpu") == "true"
+		
+		req := &scoring.TaskRequirements{
+			Type:       taskType,
+			RequireGPU: requireGPU,
+		}
+		
+		node := globalRouter.SelectBestNode(req)
+		if node == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "no suitable node found"})
+			return
+		}
+		
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"best_node": node,
+			"score": node.Score,
+		})
+	})
+
+	// Scoring - Task history endpoint
+	mux.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
+		if globalHistory == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "scoring not initialized"})
+			return
+		}
+		
+		taskType := r.URL.Query().Get("type")
+		nodeID := r.URL.Query().Get("node_id")
+		limit := r.URL.Query().Get("limit")
+		
+		var trajs []*scoring.Trajectory
+		
+		if taskType != "" {
+			trajs = globalHistory.BestByTaskType(taskType, 10)
+		} else if nodeID != "" {
+			trajs = globalHistory.GetByNode(nodeID)
+		} else {
+			limitInt := 20
+			if limit != "" {
+				fmt.Sscanf(limit, "%d", &limitInt)
+			}
+			trajs = globalHistory.GetRecent(limitInt)
+		}
+		
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"trajectories": trajs,
+			"stats": globalHistory.GetStats(),
 		})
 	})
 

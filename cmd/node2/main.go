@@ -18,38 +18,40 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dp229/openpool/pkg/capabilities"
 	"github.com/dp229/openpool/pkg/executor"
 	"github.com/dp229/openpool/pkg/gpu"
 	"github.com/dp229/openpool/pkg/ledger"
 	"github.com/dp229/openpool/pkg/marketplace"
 	"github.com/dp229/openpool/pkg/p2p"
+	"github.com/dp229/openpool/pkg/queue"
 	"github.com/dp229/openpool/pkg/scheduler"
 	"github.com/dp229/openpool/pkg/verification"
 	"github.com/dp229/openpool/pkg/wasm"
 )
 
 var (
-	flagPort      = flag.Int("port", 9000, "TCP port to listen on")
-	flagBootstrap = flag.String("bootstrap", "", "Bootstrap peer multiaddr (repeat for multiple)")
-	flagLedger    = flag.String("ledger", "openpool.db", "SQLite ledger path")
-	flagCredits   = flag.Int("credits", 100, "Starting credits")
-	flagHTTP      = flag.Int("http", 0, "HTTP API port (0=disabled)")
-	flagTest      = flag.Bool("test", false, "Run built-in test task locally")
-	flagSend      = flag.String("send", "", "Send task to peer ID (use --connect first)")
-	flagTaskFile  = flag.String("task", "", "Task JSON file")
-	flagInfo      = flag.Bool("info", false, "Print node info and exit")
-	flagDHT       = flag.Bool("dht", false, "Enable DHT peer discovery")
-	flagDiscover  = flag.Bool("discover", false, "Discover peers via DHT (implies --dht)")
-	flagMaxPeers  = flag.Int("max-peers", 5, "Max peers to discover via DHT")
-	flagConnect   = flag.String("connect", "", "Connect to a peer multiaddr")
-	flagChunked  = flag.Int("chunked", 0, "Split task into N chunks across peers")
-	flagWASM    = flag.String("wasm", "", "WASM module path for local execution")
-	flagPeerstore = flag.String("peerstore", "", "Path to peerstore JSON file for persistence")
-	flagVerify   = flag.Bool("verify", true, "Enable task verification")
-	flagMarket   = flag.Bool("market", false, "Enable task marketplace")
-	flagPrice    = flag.Int("price", 10, "Price per task (credits)")
-	flagGPU      = flag.Bool("gpu", false, "Enable GPU execution")
-	flagNodeID   = flag.String("node-id", "", "Node ID (auto-generated if not set)")
+	flagPort       = flag.Int("port", 9000, "TCP port to listen on")
+	flagBootstrap  = flag.String("bootstrap", "", "Bootstrap peer multiaddr (repeat for multiple)")
+	flagLedger     = flag.String("ledger", "openpool.db", "SQLite ledger path")
+	flagCredits    = flag.Int("credits", 100, "Starting credits")
+	flagHTTP       = flag.Int("http", 0, "HTTP API port (0=disabled)")
+	flagTest       = flag.Bool("test", false, "Run built-in test task locally")
+	flagSend       = flag.String("send", "", "Send task to peer ID (use --connect first)")
+	flagTaskFile   = flag.String("task", "", "Task JSON file")
+	flagInfo       = flag.Bool("info", false, "Print node info and exit")
+	flagDHT        = flag.Bool("dht", false, "Enable DHT peer discovery")
+	flagDiscover   = flag.Bool("discover", false, "Discover peers via DHT (implies --dht)")
+	flagMaxPeers   = flag.Int("max-peers", 5, "Max peers to discover via DHT")
+	flagConnect    = flag.String("connect", "", "Connect to a peer multiaddr")
+	flagChunked    = flag.Int("chunked", 0, "Split task into N chunks across peers")
+	flagWASM       = flag.String("wasm", "", "WASM module path for local execution")
+	flagPeerstore  = flag.String("peerstore", "", "Path to peerstore JSON file for persistence")
+	flagVerify     = flag.Bool("verify", true, "Enable task verification")
+	flagMarket     = flag.Bool("market", false, "Enable task marketplace")
+	flagPrice      = flag.Int("price", 10, "Price per task (credits)")
+	flagGPU        = flag.Bool("gpu", false, "Enable GPU execution")
+	flagNodeID     = flag.String("node-id", "", "Node ID (auto-generated if not set)")
 	flagNodeIDFile = flag.String("node-id-file", "", "Path to persist node ID")
 )
 
@@ -85,7 +87,7 @@ func main() {
 	if err != nil {
 		log.Fatal("Ledger error:", err)
 	}
-	
+
 	existingCredits := db.GetCredits(nodeID)
 	if existingCredits == 0 {
 		db.AddCredits(nodeID, *flagCredits)
@@ -236,7 +238,7 @@ func main() {
 							fmt.Sscanf(sumStr, "%f", &sum)
 							total += int64(sum)
 							success++
-							} else if sumNum, ok := p["chunk_sum"].(float64); ok {
+						} else if sumNum, ok := p["chunk_sum"].(float64); ok {
 							total += int64(sumNum)
 							success++
 						}
@@ -304,94 +306,124 @@ func main() {
 	var exec *executor.Executor
 	if *flagWASM != "" {
 		r, err := wasm.New()
-	if err != nil {
-		log.Printf("WASM init error: %v", err)
-	} else {
-		{
-		// Create verifier if enabled
-		var v *verification.Verifier
-		if *flagVerify {
-			v, err = verification.NewWithDefaults(*flagLedger)
-			if err != nil {
-				log.Printf("⚠ Verifier init error: %v (continuing without)", err)
-				v = nil
-			} else {
-				log.Printf("✓ Task verifier ready")
-			}
-		}
-		
-		exec = executor.New(r, db, v)
-		log.Printf("✓ WASM executor ready (native mode)")
-		}
-	}
-
-	// GPU Execution
-	var gpupool *gpu.Pool
-	if *flagGPU {
-		gpupool = gpu.New()
-		if err := gpupool.Detect(); err != nil {
-			log.Printf("⚠ GPU detection: %v (running in CPU mode)", err)
-		} else {
-			devs := gpupool.Devices()
-			log.Printf("✓ GPU enabled: %d device(s)", len(devs))
-			for _, d := range devs {
-				log.Printf("  - %s (%s, %dMB VRAM)", d.Name, d.Vendor, d.VRAMMB)
-			}
-		}
-	}
-
-	// Marketplace
-	var market *marketplace.Marketplace
-	if *flagMarket {
-		market, err = marketplace.New(*flagLedger, nodeID)
 		if err != nil {
-			log.Printf("⚠ Marketplace init error: %v", err)
+			log.Printf("WASM init error: %v", err)
 		} else {
-			// Register this node with capabilities
-			multiaddr := ""
-			if len(node.Multiaddrs()) > 0 {
-				multiaddr = node.Multiaddrs()[0]
-			}
-			
-			// Detect capabilities
-			caps := marketplace.NodeCapabilities{
-				CPUCores:    runtime.NumCPU(),
-				CPUArch:     runtime.GOARCH,
-				WASMEnabled: *flagWASM != "",
-			}
-			if *flagGPU && gpupool != nil && gpupool.IsEnabled() {
-				devs := gpupool.Devices()
-				if len(devs) > 0 {
-					caps.GPU = &marketplace.GPU{
-						Present: true,
-						Model:   devs[0].Name,
-						VRAMGB:  devs[0].VRAMMB / 1024,
+			{
+				// Create verifier if enabled
+				var v *verification.Verifier
+				if *flagVerify {
+					v, err = verification.NewWithDefaults(*flagLedger)
+					if err != nil {
+						log.Printf("⚠ Verifier init error: %v (continuing without)", err)
+						v = nil
+					} else {
+						log.Printf("✓ Task verifier ready")
 					}
 				}
+
+				exec = executor.New(r, db, v)
+				log.Printf("✓ WASM executor ready (native mode)")
 			}
-			
-			market.RegisterNode(marketplace.NodeInfo{
-				NodeID:       nodeID,
-				Multiaddr:    multiaddr,
-				Capabilities: caps,
-				PricePerTask: *flagPrice,
-				Status:       "online",
-			})
-			log.Printf("✓ Marketplace enabled (price: %d credits/task)", *flagPrice)
 		}
-	}
 
-	// HTTP API
-	if *flagHTTP > 0 {
-		go serveHTTP(node, db, nodeID, exec, *flagHTTP, market, gpupool)
-	}
+		// GPU Execution
+		var gpupool *gpu.Pool
+		if *flagGPU {
+			gpupool = gpu.New()
+			if err := gpupool.Detect(); err != nil {
+				log.Printf("⚠ GPU detection: %v (running in CPU mode)", err)
+			} else {
+				devs := gpupool.Devices()
+				log.Printf("✓ GPU enabled: %d device(s)", len(devs))
+				for _, d := range devs {
+					log.Printf("  - %s (%s, %dMB VRAM)", d.Name, d.Vendor, d.VRAMMB)
+				}
+			}
+		}
 
-	// Wait for shutdown
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
-	fmt.Println("■ Shutting down...")
-	node.Close()
+		// Marketplace
+		var market *marketplace.Marketplace
+		if *flagMarket {
+			market, err = marketplace.New(*flagLedger, nodeID)
+			if err != nil {
+				log.Printf("⚠ Marketplace init error: %v", err)
+			} else {
+				multiaddr := ""
+				if len(node.Multiaddrs()) > 0 {
+					multiaddr = node.Multiaddrs()[0]
+				}
+
+				hwInfo, err := capabilities.Detect()
+				if err != nil {
+					log.Printf("⚠ Hardware detection error: %v", err)
+				}
+
+				caps := marketplace.NodeCapabilities{
+					CPUCores:    hwInfo.CPU.Cores,
+					CPUArch:     hwInfo.CPU.Arch,
+					RAMGB:       int(hwInfo.Memory.TotalGB),
+					StorageGB:   int(hwInfo.Storage.TotalGB),
+					WASMEnabled: *flagWASM != "",
+				}
+				if *flagGPU && gpupool != nil && gpupool.IsEnabled() {
+					devs := gpupool.Devices()
+					if len(devs) > 0 {
+						caps.GPU = &marketplace.GPU{
+							Present: true,
+							Model:   devs[0].Name,
+							VRAMGB:  devs[0].VRAMMB / 1024,
+						}
+					}
+				}
+
+				market.RegisterNode(marketplace.NodeInfo{
+					NodeID:       nodeID,
+					Multiaddr:    multiaddr,
+					Capabilities: caps,
+					Country:      hwInfo.Network.Country,
+					City:         hwInfo.Network.City,
+					PricePerTask: *flagPrice,
+					Status:       "online",
+				})
+				log.Printf("✓ Marketplace enabled (price: %d credits/task)", *flagPrice)
+				log.Printf("  Hardware: %d cores, %dGB RAM, %dGB storage", caps.CPUCores, caps.RAMGB, caps.StorageGB)
+			}
+		}
+
+		// Task Queue (always enabled)
+		taskQueue := queue.NewWorkerPool(100, runtime.NumCPU())
+		if *flagWASM != "" {
+			taskQueue.SetExecutor(func(ctx context.Context, task *queue.Task) (json.RawMessage, error) {
+				if exec == nil {
+					return nil, fmt.Errorf("no WASM runtime")
+				}
+				execTask := &executor.Task{
+					WASMPath:   *flagWASM,
+					RawInput:   task.Input,
+					TimeoutSec: task.Timeout,
+					Credits:    task.Credits,
+				}
+				result, err := exec.Execute(ctx, execTask)
+				if err != nil {
+					return nil, err
+				}
+				return json.RawMessage(result), nil
+			})
+			log.Printf("✓ Task queue ready (%d workers, 100 task depth)", runtime.NumCPU())
+		}
+
+		// HTTP API
+		if *flagHTTP > 0 {
+			go serveHTTP(node, db, nodeID, exec, *flagHTTP, market, gpupool, taskQueue)
+		}
+
+		// Wait for shutdown
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		<-sig
+		fmt.Println("■ Shutting down...")
+		node.Close()
 	}
 }
 
@@ -475,12 +507,12 @@ func getFreeRAM() int {
 	return 0
 }
 
-func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.Executor, port int, market *marketplace.Marketplace, gpupool *gpu.Pool) {
+func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.Executor, port int, market *marketplace.Marketplace, gpupool *gpu.Pool, taskQueue *queue.WorkerPool) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"node_id":         node.ID,
-			"peer_info":      node.PeerInfo(),
+			"peer_info":       node.PeerInfo(),
 			"multiaddrs":      node.Multiaddrs(),
 			"credits":         db.GetCredits(node.ID),
 			"cpu_cores":       runtime.NumCPU(),
@@ -496,7 +528,9 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 			http.Error(w, "POST only", 405)
 			return
 		}
-		var req struct{ Address string `json:"address"` }
+		var req struct {
+			Address string `json:"address"`
+		}
 		json.NewDecoder(r.Body).Decode(&req)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -533,27 +567,27 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
 			return
 		}
-		
+
 		// Parse for credits (optional)
 		var req struct {
-			Op        string `json:"op"`
-			Arg       int    `json:"arg"`
-			Credits   int    `json:"credits"`
-			TimeoutSec int   `json:"timeout_sec"`
+			Op         string `json:"op"`
+			Arg        int    `json:"arg"`
+			Credits    int    `json:"credits"`
+			TimeoutSec int    `json:"timeout_sec"`
 		}
 		if err := json.Unmarshal(rawReq, &req); err != nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
 			return
 		}
-		
+
 		timeoutSec := req.TimeoutSec
 		if timeoutSec == 0 {
 			timeoutSec = 30
 		}
-		
+
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 		defer cancel()
-		
+
 		// Create task with raw input
 		task := &executor.Task{
 			WASMPath:   *flagWASM,
@@ -561,18 +595,18 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 			TimeoutSec: timeoutSec,
 			Credits:    req.Credits,
 		}
-		
+
 		result, err := exec.Execute(ctx, task)
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
 			return
 		}
-		
+
 		// Deduct credits
 		if task.Credits > 0 {
 			db.AddCredits(nodeID, -task.Credits)
 		}
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "result": string(result), "credits_deducted": task.Credits})
 	})
@@ -586,7 +620,7 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 	fmt.Printf("   - POST /run     - Run task locally (no P2P)\n")
 	fmt.Printf("   - GET  /verify  - Get verification history\n")
 	fmt.Printf("   - GET  /stats   - Node reliability stats\n")
-	
+
 	// Verification history endpoint
 	mux.HandleFunc("/verify", func(w http.ResponseWriter, r *http.Request) {
 		taskID := r.URL.Query().Get("task_id")
@@ -597,30 +631,30 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		// This would need verifier passed to serveHTTP - skip for now
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"task_id": taskID,
-			"status": "ok",
-			"note":   "verification API needs verifier instance in serveHTTP",
+			"status":  "ok",
+			"note":    "verification API needs verifier instance in serveHTTP",
 		})
 	})
-	
+
 	// Node stats endpoint
 	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
 		if market == nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
 			return
 		}
-		
+
 		nodes, err := market.GetNodes()
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"node_id": nodeID,
-			"marketplace": "enabled",
+			"node_id":         nodeID,
+			"marketplace":     "enabled",
 			"available_nodes": len(nodes),
 		})
 	})
-	
+
 	// GPU stats endpoint
 	mux.HandleFunc("/gpu", func(w http.ResponseWriter, r *http.Request) {
 		if gpupool == nil {
@@ -631,44 +665,44 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 			})
 			return
 		}
-		
+
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"enabled": gpupool.IsEnabled(),
 			"devices": gpupool.Devices(),
 		})
 	})
-	
+
 	// GPU execute endpoint
 	mux.HandleFunc("/gpu/run", func(w http.ResponseWriter, r *http.Request) {
 		if gpupool == nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "GPU not enabled"})
 			return
 		}
-		
+
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST only", 405)
 			return
 		}
-		
+
 		var req struct {
-			Op    string `json:"op"`
+			Op    string          `json:"op"`
 			Input json.RawMessage `json:"input"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
-		
+
 		result, err := gpupool.Execute(context.Background(), req.Op, req.Input)
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
 			return
 		}
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(result)
 	})
-	
+
 	// Marketplace: List available nodes
 	mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
 		if market == nil {
@@ -682,14 +716,14 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"nodes": nodes, "count": len(nodes)})
 	})
-	
+
 	// Marketplace: Publish task
 	mux.HandleFunc("/tasks", func(w http.ResponseWriter, r *http.Request) {
 		if market == nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
 			return
 		}
-		
+
 		if r.Method == http.MethodPost {
 			var task marketplace.TaskListing
 			if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
@@ -703,7 +737,7 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 			json.NewEncoder(w).Encode(map[string]string{"status": "ok", "task_id": task.TaskID})
 			return
 		}
-		
+
 		// GET: List tasks
 		status := r.URL.Query().Get("status")
 		tasks, err := market.GetTasks(status)
@@ -713,14 +747,14 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"tasks": tasks, "count": len(tasks)})
 	})
-	
+
 	// Marketplace: Get task result
 	mux.HandleFunc("/tasks/", func(w http.ResponseWriter, r *http.Request) {
 		if market == nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
 			return
 		}
-		
+
 		taskID := r.URL.Path[len("/tasks/"):]
 		task, err := market.GetTask(taskID)
 		if err != nil {
@@ -729,14 +763,14 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		}
 		json.NewEncoder(w).Encode(task)
 	})
-	
+
 	// Bidding: Place a bid on a task
 	mux.HandleFunc("/bids", func(w http.ResponseWriter, r *http.Request) {
 		if market == nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
 			return
 		}
-		
+
 		if r.Method == http.MethodPost {
 			var req struct {
 				TaskID   string `json:"task_id"`
@@ -749,7 +783,7 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 				http.Error(w, err.Error(), 400)
 				return
 			}
-			
+
 			bid, err := market.PlaceBid(context.Background(), req.TaskID, req.NodeID, req.NodeAddr, req.Credits, req.ETASec)
 			if err != nil {
 				json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
@@ -758,14 +792,14 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 			json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "bid": bid})
 			return
 		}
-		
+
 		// GET: List bids for a task
 		taskID := r.URL.Query().Get("task_id")
 		if taskID == "" {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "task_id required"})
 			return
 		}
-		
+
 		bids, err := market.GetBidsForTask(taskID)
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
@@ -773,16 +807,16 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"bids": bids, "count": len(bids)})
 	})
-	
+
 	// Bidding: Get winning bid for a task
 	mux.HandleFunc("/bids/", func(w http.ResponseWriter, r *http.Request) {
 		if market == nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
 			return
 		}
-		
+
 		taskID := r.URL.Path[len("/bids/"):]
-		
+
 		// Get winning bid
 		bid, err := market.GetWinningBid(taskID)
 		if err != nil {
@@ -791,20 +825,20 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"winning_bid": bid})
 	})
-	
+
 	// Bidding: Auto-match best bid
 	mux.HandleFunc("/match", func(w http.ResponseWriter, r *http.Request) {
 		if market == nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "marketplace not enabled"})
 			return
 		}
-		
+
 		taskID := r.URL.Query().Get("task_id")
 		if taskID == "" {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "task_id required"})
 			return
 		}
-		
+
 		bid, err := market.AutoMatch(taskID)
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
@@ -817,29 +851,29 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 			http.Error(w, "POST only", 405)
 			return
 		}
-		
+
 		var req struct {
-			Op string `json:"op"`
-			Arg int   `json:"arg"`
+			Op  string `json:"op"`
+			Arg int    `json:"arg"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
-		
+
 		opID := wasm.OpToID(req.Op)
 		if opID < 0 {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "unknown op"})
 			return
 		}
-		
+
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		
+
 		// Use executor if available, otherwise create new runtime
 		var result []byte
 		var err error
-		
+
 		if exec != nil && exec.Runtime() != nil {
 			result, err = exec.Runtime().Run(ctx, opID, req.Arg)
 		} else {
@@ -852,18 +886,95 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 			defer rt.Close(ctx)
 			result, err = rt.Run(ctx, opID, req.Arg)
 		}
-		
+
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
 			return
 		}
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(result)
 	})
-	
+
+	// Large payload endpoint - streams POST body without URL argument limits
+	mux.HandleFunc("/run/large", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", 405)
+			return
+		}
+
+		// Limit body to 100MB
+		r.Body = http.MaxBytesReader(w, r.Body, 100<<20)
+
+		var req struct {
+			Op         string          `json:"op"`
+			Input      json.RawMessage `json:"input"`
+			Credits    int             `json:"credits"`
+			TimeoutSec int             `json:"timeout_sec"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid JSON or payload too large (max 100MB): "+err.Error(), 400)
+			return
+		}
+
+		timeoutSec := req.TimeoutSec
+		if timeoutSec == 0 {
+			timeoutSec = 60
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+		defer cancel()
+
+		task := &queue.Task{
+			ID:       "large-" + time.Now().Format("150405.000"),
+			Op:       req.Op,
+			Input:    req.Input,
+			Credits:  req.Credits,
+			Timeout:  timeoutSec,
+			Priority: 1,
+		}
+
+		result, err := taskQueue.DequeueAndRun(ctx, task)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+
+		if req.Credits > 0 {
+			db.AddCredits(nodeID, -req.Credits)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":           "ok",
+			"result_size":      len(result),
+			"credits_deducted": req.Credits,
+		})
+	})
+
+	// Queue status endpoint
+	mux.HandleFunc("/queue", func(w http.ResponseWriter, r *http.Request) {
+		stats := taskQueue.Stats()
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"workers":   runtime.NumCPU(),
+			"max_queue": 100,
+			"stats":     stats,
+		})
+	})
+
+	// Hardware info endpoint
+	mux.HandleFunc("/hardware", func(w http.ResponseWriter, r *http.Request) {
+		hwInfo, err := capabilities.Detect()
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(hwInfo)
+	})
+
 	addr := fmt.Sprintf(":%d", port)
-	
+
 	// Serve static UI files
 	fs := http.FileServer(http.Dir("ui"))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -874,7 +985,7 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		// Check if file exists, otherwise serve index.html for SPA
 		http.ServeFile(w, r, "ui"+r.URL.Path)
 	})
-	
+
 	server := &http.Server{Addr: addr, Handler: mux}
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Printf("⚠ HTTP server error: %v\n", err)

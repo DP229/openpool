@@ -4,23 +4,24 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 )
 
 // Task represents a queued task.
 type Task struct {
-	ID         string          `json:"id"`
-	Op         string          `json:"op"`
-	Input      json.RawMessage `json:"input"`
-	Priority   int             `json:"priority"`  // Higher = more important
-	Credits    int             `json:"credits"`
-	Timeout    int             `json:"timeout_sec"`
-	Submitted  time.Time       `json:"submitted"`
-	Status     string          `json:"status"` // pending, running, completed, failed
-	Result     json.RawMessage `json:"result,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	Completed  *time.Time      `json:"completed,omitempty"`
+	ID        string          `json:"id"`
+	Op        string          `json:"op"`
+	Input     json.RawMessage `json:"input"`
+	Priority  int             `json:"priority"` // Higher = more important
+	Credits   int             `json:"credits"`
+	Timeout   int             `json:"timeout_sec"`
+	Submitted time.Time       `json:"submitted"`
+	Status    string          `json:"status"` // pending, running, completed, failed
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	Completed *time.Time      `json:"completed,omitempty"`
 }
 
 // Queue manages pending tasks with priority ordering.
@@ -178,8 +179,8 @@ type Worker struct {
 
 // WorkerPool manages multiple workers.
 type WorkerPool struct {
-	workers []*Worker
-	queue   *Queue
+	workers  []*Worker
+	queue    *Queue
 	workersM int
 	running  bool
 	wg       sync.WaitGroup
@@ -271,6 +272,43 @@ func (p *WorkerPool) Stop() {
 // Submit adds a task to the pool.
 func (p *WorkerPool) Submit(task *Task) error {
 	return p.queue.Enqueue(task)
+}
+
+// DequeueAndRun submits a task and waits for completion with a timeout.
+func (p *WorkerPool) DequeueAndRun(ctx context.Context, task *Task) (json.RawMessage, error) {
+	if err := p.queue.Enqueue(task); err != nil {
+		return nil, err
+	}
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			task.Status = "failed"
+			task.Error = "timeout"
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if task.Completed != nil {
+				if task.Error != "" {
+					return nil, errors.New(task.Error)
+				}
+				return task.Result, nil
+			}
+		}
+	}
+}
+
+// Stats returns queue and worker statistics.
+func (p *WorkerPool) Stats() map[string]interface{} {
+	q := p.queue
+	return map[string]interface{}{
+		"queue_size": q.Size(),
+		"pending":    len(q.GetAll()),
+		"workers":    len(p.workers),
+		"running":    p.running,
+	}
 }
 
 // GetQueue returns the task queue.

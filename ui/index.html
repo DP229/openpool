@@ -24,8 +24,6 @@
     .btn:hover { background: #2ea043; }
     .btn.secondary { background: #30363d; color: #c9d1d9; }
     .btn.secondary:hover { background: #484f58; }
-    .btn.danger { background: #da3633; }
-    .btn.danger:hover { background: #f85149; }
     .btn.small { padding: 6px 12px; font-size: 12px; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     
@@ -48,16 +46,20 @@
     .peer-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; transition: all 0.2s; }
     .peer-card:hover { border-color: #58a6ff; }
     .peer-card.selected { border-color: #238636; background: rgba(35,134,54,0.1); }
+    .peer-card.connected { border-color: #3fb950; background: rgba(63,185,80,0.1); }
     .peer-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
     .peer-id { font-family: monospace; font-size: 12px; color: #58a6ff; word-break: break-all; }
     .peer-status { font-size: 11px; padding: 3px 8px; border-radius: 12px; font-weight: 500; }
     .peer-status.online { background: rgba(63,185,80,0.2); color: #3fb950; }
     .peer-status.offline { background: rgba(248,81,73,0.2); color: #f85149; }
-    .peer-details { display: grid; gap: 8px; }
+    .peer-details { display: grid; gap: 6px; }
     .peer-row { display: flex; justify-content: space-between; font-size: 13px; }
     .peer-row .label { color: #8b949e; }
     .peer-row .value { color: #c9d1d9; }
     .peer-actions { display: flex; gap: 8px; margin-top: 12px; }
+    .peer-card.connected .peer-actions { display: none; }
+    .connected-badge { display: none; color: #3fb950; font-size: 12px; font-weight: 500; }
+    .peer-card.connected .connected-badge { display: block; }
     
     /* Selection Panel */
     .selection-panel { background: #161b22; border: 2px solid #238636; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
@@ -68,10 +70,6 @@
     .selected-peer .remove { cursor: pointer; opacity: 0.7; }
     .selected-peer .remove:hover { opacity: 1; }
     
-    /* Task Distribution */
-    .distribute-section { background: #1f2937; border-radius: 8px; padding: 20px; margin-top: 16px; }
-    .distribute-section h4 { color: #c9d1d9; margin-bottom: 12px; }
-    
     /* Network Overview */
     .network-map { background: #161b22; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
     .network-map h3 { margin-bottom: 16px; color: #c9d1d9; }
@@ -79,11 +77,22 @@
     .node-circle { width: 80px; height: 80px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; border: 3px solid; }
     .node-circle.local { background: #238636; border-color: #3fb950; color: white; }
     .node-circle.peer { background: #30363d; border-color: #8b949e; color: #c9d1d9; }
-    .node-circle.selected-peer { background: #1f4d2e; border-color: #3fb950; color: #3fb950; }
+    .node-circle.connected { background: rgba(35,134,54,0.3); border-color: #3fb950; color: #3fb950; }
     .node-circle .name { font-size: 10px; margin-top: 4px; opacity: 0.8; }
     .node-circle .count { font-size: 20px; font-weight: bold; }
     .connection-line { width: 40px; height: 2px; background: #30363d; }
     .connection-line.active { background: #238636; }
+    
+    /* Discovery Server */
+    .server-config { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .server-config h4 { color: #c9d1d9; margin-bottom: 12px; }
+    .server-input { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .server-input input { flex: 1; min-width: 250px; }
+    
+    /* Empty State */
+    .empty-state { text-align: center; padding: 60px 20px; color: #8b949e; }
+    .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+    .empty-state h3 { color: #c9d1d9; margin-bottom: 8px; }
     
     @media (max-width: 768px) {
       .peer-grid { grid-template-columns: 1fr; }
@@ -111,100 +120,89 @@
         <div class="value" id="peers">0</div>
       </div>
       <div class="card">
-        <h3>Available CPUs</h3>
-        <div class="value" id="cpu">-</div>
+        <h3>Network Peers</h3>
+        <div class="value" id="networkPeers">0</div>
       </div>
       <div class="card">
-        <h3>Selected for Task</h3>
+        <h3>Selected</h3>
         <div class="value green" id="selectedCount">0</div>
-      </div>
-      <div class="card">
-        <h3>Network Status</h3>
-        <div class="value" id="networkStatus" style="font-size: 16px;">Checking...</div>
       </div>
     </div>
     
     <!-- Quick Actions -->
     <div class="actions">
-      <button class="btn" onclick="refresh()">🔄 Refresh Status</button>
-      <button class="btn secondary" onclick="discoverPeers()">🔍 Discover Network</button>
+      <button class="btn" onclick="refresh()">🔄 Refresh</button>
+      <button class="btn secondary" onclick="discoverPeers()">🔍 Find Network</button>
       <button class="btn secondary" onclick="showTab('run')">▶ Run Task</button>
-      <button class="btn secondary" onclick="showLedger()">💰 View Ledger</button>
     </div>
     
     <!-- Tabs -->
     <div class="tabs">
-      <button class="tab active" onclick="showTab('peers')">👥 Network</button>
+      <button class="tab active" onclick="showTab('network')">🌐 Network</button>
+      <button class="tab" onclick="showTab('peers')">👥 My Peers</button>
       <button class="tab" onclick="showTab('run')">▶ Run Task</button>
       <button class="tab" onclick="showTab('distribute')">📤 Distribute</button>
       <button class="tab" onclick="showTab('market')">🏪 Market</button>
       <button class="tab" onclick="showTab('connect')">🔗 Connect</button>
-      <button class="tab" onclick="showTab('gpu')">🖥️ GPU</button>
     </div>
     
-    <!-- Network/Peers Tab -->
-    <div id="tab-peers">
+    <!-- Network Tab (Discover Peers) -->
+    <div id="tab-network">
+      <!-- Server Config -->
+      <div class="server-config">
+        <h4>📡 Network Discovery Server</h4>
+        <div class="server-input">
+          <input type="text" id="registryUrl" placeholder="Discovery server URL (e.g., https://openpool.live/api)" value="https://openpool.live/api">
+          <button class="btn" onclick="connectToRegistry()">Connect</button>
+          <button class="btn secondary" onclick="loadNetworkPeers()">🔍 Refresh</button>
+        </div>
+        <p style="color: #8b949e; font-size: 12px; margin-top: 8px;">
+          Connect to a discovery server to find peers in the network.
+        </p>
+      </div>
+      
+      <!-- Network Peers -->
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <h3 style="color: #c9d1d9;">🌐 Available Network Peers (<span id="networkPeerCount">0</span>)</h3>
+          <button class="btn small" onclick="loadNetworkPeers()">🔄 Refresh</button>
+        </div>
+        
+        <div class="peer-grid" id="networkPeerGrid">
+          <div class="empty-state">
+            <div class="icon">🌐</div>
+            <h3>No Network Peers Found</h3>
+            <p>Connect to a discovery server above, or add peers manually.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- My Peers Tab -->
+    <div id="tab-peers" style="display: none;">
       <!-- Selection Panel -->
       <div class="selection-panel" id="selectionPanel" style="display: none;">
         <div class="selection-header">
-          <h3>✓ <span id="selectedCount2">0</span> peers selected</h3>
+          <h3>✓ <span id="selectedCount2">0</span> peers selected for distribution</h3>
           <button class="btn small secondary" onclick="clearSelection()">Clear All</button>
         </div>
         <div class="selected-peers" id="selectedPeersList"></div>
-        
-        <div class="distribute-section">
-          <h4>Distribute Task to Selected Peers</h4>
-          <div style="display: grid; gap: 12px;">
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
-              <div>
-                <label class="label" style="color: #8b949e; font-size: 12px; display: block; margin-bottom: 4px;">Operation</label>
-                <select id="distOp">
-                  <option value="fib">fib - Fibonacci</option>
-                  <option value="sumFib">sumFib - Sum of Fibonacci</option>
-                  <option value="sumSquares">sumSquares - Sum of Squares</option>
-                  <option value="matrixTrace">matrixTrace - Matrix Trace</option>
-                </select>
-              </div>
-              <div>
-                <label class="label" style="color: #8b949e; font-size: 12px; display: block; margin-bottom: 4px;">Argument (n)</label>
-                <input type="number" id="distArg" value="30" min="1" max="10000">
-              </div>
-              <div>
-                <label class="label" style="color: #8b949e; font-size: 12px; display: block; margin-bottom: 4px;">Credits per task</label>
-                <input type="number" id="distCredits" value="5" min="1">
-              </div>
-            </div>
-            <button class="btn" onclick="distributeTask()" id="distributeBtn">📤 Distribute to Selected</button>
-          </div>
-          <div class="output" id="distributeResult" style="margin-top: 12px;">Distribution results will appear here...</div>
-        </div>
       </div>
       
-      <!-- Network Overview -->
-      <div class="network-map">
-        <h3>Network Overview</h3>
-        <div class="network-diagram" id="networkDiagram">
-          <div class="node-circle local">
-            <span>Your Node</span>
-            <span class="count" id="localCpu">-</span>
-            <span class="name">CPU cores</span>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Peers Grid -->
+      <!-- Connected Peers -->
       <div class="card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-          <h3 style="color: #c9d1d9;">Connected Peers (<span id="peerCount">0</span>)</h3>
-          <button class="btn small secondary" onclick="discoverPeers()">🔍 Discover More</button>
-        </div>
+        <h3 style="color: #c9d1d9; margin-bottom: 16px;">👥 Connected Peers (<span id="connectedPeerCount">0</span>)</h3>
         <div class="peer-grid" id="peerGrid">
-          <div style="color: #8b949e; padding: 40px; text-align: center;">Click "Discover Network" to find peers</div>
+          <div class="empty-state">
+            <div class="icon">🔗</div>
+            <h3>No Peers Connected</h3>
+            <p>Go to Network tab to find and connect to peers.</p>
+          </div>
         </div>
       </div>
     </div>
     
-    <!-- Run Task Tab (Local) -->
+    <!-- Run Task Tab -->
     <div id="tab-run" class="card" style="display: none;">
       <h3>Run Task Locally</h3>
       <div style="display: grid; gap: 12px; max-width: 500px;">
@@ -228,47 +226,47 @@
     
     <!-- Distribute Tab -->
     <div id="tab-distribute" class="card" style="display: none;">
-      <h3>Distribute Task to Network</h3>
-      <p style="color: #8b949e; margin-bottom: 16px;">Select peers from the Network tab or add them below</p>
+      <h3>📤 Distribute Task</h3>
+      <p style="color: #8b949e; margin-bottom: 16px;">Select peers from the Network tab, or enter addresses below.</p>
       
       <div style="display: grid; gap: 12px; max-width: 600px;">
         <div>
-          <label style="color: #8b949e; font-size: 12px; display: block; margin-bottom: 4px;">Target Peers (one per line, multiaddr)</label>
-          <textarea id="targetPeers" placeholder="/ip4/192.168.1.10/tcp/9000/p2p/Qm..."></textarea>
+          <label style="color: #8b949e; font-size: 12px; display: block; margin-bottom: 4px;">Target Peers (multiaddr, one per line)</label>
+          <textarea id="targetPeers" placeholder="/ip4/.../tcp/9000/p2p/Qm..."></textarea>
         </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
           <div>
             <label style="color: #8b949e; font-size: 12px; display: block; margin-bottom: 4px;">Operation</label>
-            <select id="netOp">
+            <select id="distOp">
               <option value="fib">fib</option>
               <option value="sumFib">sumFib</option>
               <option value="sumSquares">sumSquares</option>
             </select>
           </div>
           <div>
-            <label style="color: #8b949e; font-size: 12px; display: block; margin-bottom: 4px;">Argument (n)</label>
-            <input type="number" id="netArg" value="30" min="1" max="10000">
+            <label style="color: #8b949e; font-size: 12px; display: block; margin-bottom: 4px;">Argument</label>
+            <input type="number" id="distArg" value="30" min="1">
           </div>
           <div>
             <label style="color: #8b949e; font-size: 12px; display: block; margin-bottom: 4px;">Credits</label>
-            <input type="number" id="netCredits" value="10" min="1">
+            <input type="number" id="distCredits" value="10" min="1">
           </div>
         </div>
-        <button class="btn" onclick="publishNetworkTask()">📤 Publish to Network</button>
-        <div class="output" id="netResult">Network task results...</div>
+        <button class="btn" onclick="distributeTask()">📤 Distribute</button>
+        <div class="output" id="distResult">Distribution results...</div>
       </div>
     </div>
     
     <!-- Market Tab -->
     <div id="tab-market" class="card" style="display: none;">
-      <h3>Compute Marketplace</h3>
-      <button class="btn secondary" onclick="loadMarket()" style="margin-bottom: 16px;">🔄 Refresh Marketplace</button>
+      <h3>🏪 Compute Marketplace</h3>
+      <button class="btn secondary" onclick="loadMarket()" style="margin-bottom: 16px;">🔄 Refresh</button>
       <div class="output" id="marketData">Click refresh to load marketplace...</div>
     </div>
     
     <!-- Connect Tab -->
     <div id="tab-connect" class="card" style="display: none;">
-      <h3>Connect to Peer</h3>
+      <h3>🔗 Manual Connect</h3>
       <div style="display: grid; gap: 12px; max-width: 600px;">
         <div>
           <label style="color: #8b949e; font-size: 12px; display: block; margin-bottom: 4px;">Peer Multiaddr</label>
@@ -278,27 +276,15 @@
         <div class="output" id="connectResult">Connection status...</div>
       </div>
     </div>
-    
-    <!-- GPU Tab -->
-    <div id="tab-gpu" class="card" style="display: none;">
-      <h3>GPU Acceleration</h3>
-      <button class="btn secondary" onclick="loadGPU()" style="margin-bottom: 16px;">🔄 Check GPU</button>
-      <div class="output" id="gpuInfo">Click to check GPU status...</div>
-    </div>
-    
-    <!-- Ledger Tab -->
-    <div id="tab-ledger" class="card" style="display: none;">
-      <h3>Credit Ledger</h3>
-      <button class="btn secondary" onclick="showTab('peers')" style="margin-bottom: 16px;">← Back</button>
-      <div class="output" id="ledgerData" style="max-height: 400px;">Loading...</div>
-    </div>
   </div>
 
   <script>
     const API = window.location.origin;
-    let currentTab = 'peers';
+    let currentTab = 'network';
     let selectedPeers = [];
-    let allPeers = [];
+    let networkPeers = [];
+    let connectedPeers = [];
+    let registryUrl = 'https://openpool.live/api';
     
     async function apiCall(endpoint, opts = {}) {
       try {
@@ -315,95 +301,168 @@
     async function refresh() {
       const status = await apiCall('/status');
       if (status.error) {
-        showError('Failed to connect: ' + status.error);
+        showError('Failed to connect to local node: ' + status.error);
         return;
       }
       
       document.getElementById('nodeId').textContent = (status.node_id || 'Unknown').substring(0, 20) + '...';
       document.getElementById('credits').textContent = status.credits ?? 0;
       document.getElementById('peers').textContent = status.connected_peers ?? 0;
-      document.getElementById('cpu').textContent = status.cpu_cores ?? '-';
-      document.getElementById('localCpu').textContent = status.cpu_cores ?? '?';
-      
-      const peerCount = status.connected_peers ?? 0;
-      document.getElementById('networkStatus').innerHTML = peerCount > 0 
-        ? '<span style="color: #3fb950">● Connected</span>' 
-        : '<span style="color: #d29922">● Standalone</span>';
+      connectedPeers = status.peers || [];
+      document.getElementById('connectedPeerCount').textContent = connectedPeers.length;
       
       clearError();
-      
-      // Auto-load peers
-      if (peerCount > 0) {
-        discoverPeers();
-      }
+      renderConnectedPeers();
     }
     
-    async function discoverPeers() {
-      const res = await apiCall('/discover');
-      
-      allPeers = res.peers || [];
-      const peerCount = allPeers.length;
-      
-      document.getElementById('peerCount').textContent = peerCount;
-      document.getElementById('peers').textContent = peerCount;
-      
-      const grid = document.getElementById('peerGrid');
-      
-      if (peerCount === 0) {
-        grid.innerHTML = '<div style="color: #8b949e; padding: 40px; text-align: center;">No peers found. Use Connect tab to add peers manually.</div>';
+    async function connectToRegistry() {
+      registryUrl = document.getElementById('registryUrl').value.trim();
+      if (!registryUrl) {
+        showError('Enter a discovery server URL');
         return;
       }
+      await loadNetworkPeers();
+      showSuccess('Connected to registry');
+    }
+    
+    async function loadNetworkPeers() {
+      registryUrl = document.getElementById('registryUrl').value.trim();
       
-      grid.innerHTML = allPeers.map((p, i) => {
-        const peerId = typeof p === 'string' ? p : (p.ID || p.address || `Peer ${i+1}`);
-        const shortId = peerId.length > 20 ? peerId.substring(0, 20) + '...' : peerId;
-        const isSelected = selectedPeers.includes(peerId);
+      const grid = document.getElementById('networkPeerGrid');
+      grid.innerHTML = '<div style="color: #8b949e; padding: 40px; text-align: center;">🔍 Searching for peers...</div>';
+      
+      try {
+        const res = await fetch(registryUrl + '/peers');
+        if (!res.ok) throw new Error('Registry not responding');
         
-        return `
-          <div class="peer-card ${isSelected ? 'selected' : ''}" id="peer-${i}">
+        const data = await res.json();
+        networkPeers = data.peers || [];
+        
+        document.getElementById('networkPeerCount').textContent = networkPeers.length;
+        document.getElementById('networkPeers').textContent = networkPeers.length;
+        
+        if (networkPeers.length === 0) {
+          grid.innerHTML = `
+            <div class="empty-state">
+              <div class="icon">🌐</div>
+              <h3>No Peers Online</h3>
+              <p>No peers are currently registered with this discovery server.</p>
+            </div>
+          `;
+          return;
+        }
+        
+        grid.innerHTML = networkPeers.map((p, i) => `
+          <div class="peer-card" id="net-peer-${i}">
             <div class="peer-header">
-              <span class="peer-id" title="${peerId}">${shortId}</span>
-              <span class="peer-status online">● Online</span>
+              <span class="peer-id">${p.id ? p.id.substring(0, 16) + '...' : 'Unknown'}</span>
+              <span class="peer-status ${p.status === 'online' ? 'online' : 'offline'}">● ${p.status || 'offline'}</span>
             </div>
             <div class="peer-details">
               <div class="peer-row">
-                <span class="label">Capabilities:</span>
-                <span class="value">CPU${p.gpu ? ', GPU' : ''}</span>
+                <span class="label">Location:</span>
+                <span class="value">${p.country || 'Unknown'}</span>
+              </div>
+              <div class="peer-row">
+                <span class="label">CPU Cores:</span>
+                <span class="value">${p.cpu_cores || '?'}</span>
+              </div>
+              <div class="peer-row">
+                <span class="label">GPU:</span>
+                <span class="value">${p.has_gpu ? '✅ Yes' : '❌ No'}</span>
               </div>
               <div class="peer-row">
                 <span class="label">Price:</span>
-                <span class="value">${p.price || 10} credits/task</span>
+                <span class="value">${p.price || 10} credits</span>
               </div>
             </div>
             <div class="peer-actions">
-              <button class="btn small ${isSelected ? 'secondary' : ''}" onclick="togglePeer('${peerId.replace(/'/g, "\\'")}', ${i})">
-                ${isSelected ? '✓ Selected' : '+ Select'}
-              </button>
-              <button class="btn small secondary" onclick="connectToPeer('${peerId.replace(/'/g, "\\'")}')">Connect</button>
+              <button class="btn small" onclick="connectToNetworkPeer(${i})">🔗 Connect</button>
+              <button class="btn small secondary" onclick="selectNetworkPeer(${i})">+ Select</button>
+            </div>
+            <div class="connected-badge">✅ Connected</div>
+          </div>
+        `).join('');
+        
+      } catch (e) {
+        grid.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">⚠️</div>
+            <h3>Cannot Connect to Registry</h3>
+            <p>${e.message}</p>
+            <p style="margin-top: 8px;">Make sure the discovery server is running.</p>
+          </div>
+        `;
+      }
+    }
+    
+    async function connectToNetworkPeer(index) {
+      const peer = networkPeers[index];
+      if (!peer || !peer.multiaddr) {
+        showError('No multiaddr available for this peer');
+        return;
+      }
+      
+      const res = await apiCall('/connect', {
+        method: 'POST',
+        body: JSON.stringify({ address: peer.multiaddr })
+      });
+      
+      if (res.error) {
+        showError('Failed to connect: ' + res.error);
+      } else {
+        showSuccess('Connected to peer!');
+        document.getElementById('net-peer-' + index).classList.add('connected');
+        refresh();
+      }
+    }
+    
+    function selectNetworkPeer(index) {
+      const peer = networkPeers[index];
+      if (!peer) return;
+      
+      const id = peer.id || peer.multiaddr || 'peer-' + index;
+      const idx = selectedPeers.indexOf(id);
+      
+      if (idx > -1) {
+        selectedPeers.splice(idx, 1);
+      } else {
+        selectedPeers.push(id);
+      }
+      
+      updateSelectionUI();
+    }
+    
+    function renderConnectedPeers() {
+      const grid = document.getElementById('peerGrid');
+      
+      if (connectedPeers.length === 0) {
+        grid.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">🔗</div>
+            <h3>No Peers Connected</h3>
+            <p>Go to Network tab to find and connect to peers.</p>
+          </div>
+        `;
+        return;
+      }
+      
+      grid.innerHTML = connectedPeers.map((p, i) => {
+        const id = typeof p === 'string' ? p : (p.ID || p.id || p);
+        const shortId = id.length > 20 ? id.substring(0, 20) + '...' : id;
+        
+        return `
+          <div class="peer-card connected">
+            <div class="peer-header">
+              <span class="peer-id">${shortId}</span>
+              <span class="peer-status online">● Online</span>
+            </div>
+            <div class="peer-actions">
+              <button class="btn small secondary" onclick="removePeer('${id.replace(/'/g, "\\'")}')">Disconnect</button>
             </div>
           </div>
         `;
       }).join('');
-      
-      updateNetworkDiagram();
-    }
-    
-    function togglePeer(peerId, index) {
-      const idx = selectedPeers.indexOf(peerId);
-      if (idx > -1) {
-        selectedPeers.splice(idx, 1);
-      } else {
-        selectedPeers.push(peerId);
-      }
-      
-      // Update UI
-      const card = document.getElementById('peer-' + index);
-      if (card) {
-        card.classList.toggle('selected', selectedPeers.includes(peerId));
-        card.querySelector('button').textContent = selectedPeers.includes(peerId) ? '✓ Selected' : '+ Select';
-      }
-      
-      updateSelectionUI();
     }
     
     function updateSelectionUI() {
@@ -412,107 +471,35 @@
       document.getElementById('selectedCount2').textContent = count;
       
       const panel = document.getElementById('selectionPanel');
-      const btn = document.getElementById('distributeBtn');
-      
       panel.style.display = count > 0 ? 'block' : 'none';
-      btn.disabled = count === 0;
       
-      // Update selected peers list
       document.getElementById('selectedPeersList').innerHTML = selectedPeers.map(p => {
         const short = p.length > 15 ? p.substring(0, 15) + '...' : p;
-        return `<span class="selected-peer"><span title="${p}">${short}</span><span class="remove" onclick="togglePeerById('${p.replace(/'/g, "\\'")}')">✕</span></span>`;
+        return `<span class="selected-peer"><span title="${p}">${short}</span><span class="remove" onclick="deselectPeer('${p.replace(/'/g, "\\'")}')">✕</span></span>`;
       }).join('');
-      
-      updateNetworkDiagram();
     }
     
-    function togglePeerById(peerId) {
+    function deselectPeer(peerId) {
       const idx = selectedPeers.indexOf(peerId);
       if (idx > -1) {
         selectedPeers.splice(idx, 1);
-        // Re-render peers
-        discoverPeers();
+        updateSelectionUI();
       }
     }
     
     function clearSelection() {
       selectedPeers = [];
-      discoverPeers();
       updateSelectionUI();
     }
     
-    function updateNetworkDiagram() {
-      const diagram = document.getElementById('networkDiagram');
-      const peers = allPeers.slice(0, 5); // Show max 5 peers
-      
-      let html = `
-        <div class="node-circle local">
-          <span>You</span>
-          <span class="count">${document.getElementById('localCpu').textContent}</span>
-          <span class="name">CPU</span>
-        </div>
-      `;
-      
-      if (peers.length > 0) {
-        html += '<div class="connection-line active"></div>';
-      }
-      
-      peers.forEach((p, i) => {
-        const isSelected = selectedPeers.includes(typeof p === 'string' ? p : (p.ID || p.address));
-        html += `
-          <div class="node-circle ${isSelected ? 'selected-peer' : 'peer'}" title="${typeof p === 'string' ? p : p.ID || p.address}">
-            <span>P${i+1}</span>
-            <span class="count">${p.cpu_cores || '?'}</span>
-            <span class="name">${p.gpu ? 'GPU' : 'CPU'}</span>
-          </div>
-        `;
-        if (i < peers.length - 1) {
-          html += '<div class="connection-line"></div>';
-        }
-      });
-      
-      if (allPeers.length > 5) {
-        html += `<div style="color: #8b949e; font-size: 12px;">+${allPeers.length - 5} more</div>`;
-      }
-      
-      diagram.innerHTML = html;
-    }
-    
-    async function distributeTask() {
-      if (selectedPeers.length === 0) {
-        showError('Select at least one peer');
-        return;
-      }
-      
-      const op = document.getElementById('distOp').value;
-      const arg = parseInt(document.getElementById('distArg').value);
-      const credits = parseInt(document.getElementById('distCredits').value);
-      
-      const resultEl = document.getElementById('distributeResult');
-      resultEl.textContent = 'Distributing to ' + selectedPeers.length + ' peers...';
-      
-      const results = [];
-      for (const peer of selectedPeers) {
-        const res = await apiCall('/run', {
-          method: 'POST',
-          body: JSON.stringify({ 
-            op, 
-            arg, 
-            target_peer: peer,
-            credits 
-          })
-        });
-        results.push({ peer: peer.substring(0, 20), result: res });
-      }
-      
-      resultEl.textContent = JSON.stringify(results, null, 2);
-      showSuccess(`Task distributed to ${selectedPeers.length} peers`);
+    async function discoverPeers() {
+      showTab('network');
+      await loadNetworkPeers();
     }
     
     async function runTask() {
       const op = document.getElementById('op').value;
       const arg = parseInt(document.getElementById('arg').value);
-      
       document.getElementById('result').textContent = 'Running locally...';
       
       const res = await apiCall('/run', {
@@ -521,10 +508,31 @@
       });
       
       document.getElementById('result').textContent = JSON.stringify(res, null, 2);
+      if (res.status === 'ok') showSuccess('Task completed!');
+    }
+    
+    async function distributeTask() {
+      const targets = document.getElementById('targetPeers').value.split('\n').filter(p => p.trim());
+      const op = document.getElementById('distOp').value;
+      const arg = parseInt(document.getElementById('distArg').value);
+      const credits = parseInt(document.getElementById('distCredits').value);
       
-      if (res.status === 'ok') {
-        showSuccess('Local task completed in ' + (res.runtime || 'native'));
+      const resultEl = document.getElementById('distResult');
+      resultEl.textContent = 'Distributing to ' + (targets.length || selectedPeers.length) + ' peers...';
+      
+      const allTargets = [...new Set([...targets, ...selectedPeers])];
+      
+      const results = [];
+      for (const target of allTargets) {
+        const res = await apiCall('/run', {
+          method: 'POST',
+          body: JSON.stringify({ op, arg, target_peer: target, credits })
+        });
+        results.push({ target: target.substring(0, 20), result: res });
       }
+      
+      resultEl.textContent = JSON.stringify(results, null, 2);
+      showSuccess(`Distributed to ${allTargets.length} peers`);
     }
     
     async function connectPeer() {
@@ -540,58 +548,15 @@
       });
       
       document.getElementById('connectResult').textContent = JSON.stringify(res, null, 2);
-      
       if (!res.error) {
-        showSuccess('Connected to peer');
+        showSuccess('Connected!');
         refresh();
       }
-    }
-    
-    function connectToPeer(peerId) {
-      document.getElementById('peerAddr').value = peerId;
-      showTab('connect');
     }
     
     async function loadMarket() {
       const res = await apiCall('/nodes');
       document.getElementById('marketData').textContent = JSON.stringify(res, null, 2);
-    }
-    
-    async function loadGPU() {
-      const res = await apiCall('/gpu');
-      document.getElementById('gpuInfo').textContent = JSON.stringify(res, null, 2);
-    }
-    
-    async function publishNetworkTask() {
-      const peers = document.getElementById('targetPeers').value.split('\n').filter(p => p.trim());
-      const op = document.getElementById('netOp').value;
-      const arg = parseInt(document.getElementById('netArg').value);
-      const credits = parseInt(document.getElementById('netCredits').value);
-      
-      if (peers.length === 0) {
-        showError('Enter at least one peer');
-        return;
-      }
-      
-      const res = await apiCall('/tasks', {
-        method: 'POST',
-        body: JSON.stringify({
-          task_id: 'task-' + Date.now(),
-          op,
-          input: JSON.stringify({op, arg}),
-          credits,
-          timeout_sec: 30,
-          target_peers: peers
-        })
-      });
-      
-      document.getElementById('netResult').textContent = JSON.stringify(res, null, 2);
-    }
-    
-    async function showLedger() {
-      const res = await apiCall('/ledger');
-      document.getElementById('ledgerData').textContent = JSON.stringify(res, null, 2);
-      showTab('ledger');
     }
     
     function showTab(tab) {
@@ -602,9 +567,8 @@
       const tabEl = document.getElementById('tab-' + tab);
       if (tabEl) tabEl.style.display = 'block';
       
-      // Activate correct tab button
       const tabs = document.querySelectorAll('.tab');
-      const tabIndex = { peers: 0, run: 1, distribute: 2, market: 3, connect: 4, gpu: 5, ledger: 6 };
+      const tabIndex = { network: 0, peers: 1, run: 2, distribute: 3, market: 4, connect: 5 };
       if (tabs[tabIndex[tab]]) tabs[tabIndex[tab]].classList.add('active');
     }
     
@@ -624,12 +588,9 @@
       setTimeout(() => el.remove(), 3000);
     }
     
-    function clearError() {
-      document.querySelectorAll('.error').forEach(e => e.remove());
-    }
-    
-    // Initialize
+    // Init
     refresh();
+    loadNetworkPeers();
   </script>
 </body>
 </html>

@@ -54,6 +54,7 @@ var (
 	flagGPU        = flag.Bool("gpu", false, "Enable GPU execution")
 	flagNodeID     = flag.String("node-id", "", "Node ID (auto-generated if not set)")
 	flagNodeIDFile = flag.String("node-id-file", "", "Path to persist node ID")
+	flagRegistry   = flag.String("registry", "", "Registry server URL for peer discovery (e.g., https://openpool.live/api)")
 )
 
 func main() {
@@ -424,6 +425,11 @@ func main() {
 	// HTTP API
 	if *flagHTTP > 0 {
 		go serveHTTP(node, db, nodeID, exec, v, *flagHTTP, market, gpupool, taskQueue, mc)
+	}
+
+	// Register with discovery server
+	if *flagRegistry != "" {
+		go registerWithRegistry(*flagRegistry, nodeID, node.Multiaddrs(), runtime.NumCPU(), *flagGPU)
 	}
 
 	// Wait for shutdown
@@ -1069,5 +1075,39 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 	server := &http.Server{Addr: addr, Handler: mux}
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Printf("⚠ HTTP server error: %v\n", err)
+	}
+}
+
+// registerWithRegistry registers this node with a discovery server
+func registerWithRegistry(registryURL, nodeID string, addrs []string, cpuCores int, hasGPU bool) {
+	if len(addrs) == 0 {
+		fmt.Printf("⚠ No multiaddr available for registry\n")
+		return
+	}
+	
+	peer := map[string]interface{}{
+		"id":        nodeID,
+		"multiaddr": addrs[0],
+		"cpu_cores": cpuCores,
+		"has_gpu":   hasGPU,
+		"price":     10,
+	}
+
+	data, _ := json.Marshal(peer)
+	resp, err := http.Post(registryURL+"/register", "application/json", strings.NewReader(string(data)))
+	if err != nil {
+		fmt.Printf("⚠ Registry registration failed: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("✓ Registered with discovery server: %s\n", registryURL)
+
+	// Heartbeat loop
+	ticker := time.NewTicker(30 * time.Second)
+	for {
+		<-ticker.C
+		body, _ := json.Marshal(map[string]string{"id": nodeID})
+		http.Post(registryURL+"/heartbeat", "application/json", strings.NewReader(string(body)))
 	}
 }

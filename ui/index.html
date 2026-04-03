@@ -396,8 +396,19 @@
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('[id^="tab-"]').forEach(t => t.style.display = 'none');
       
-      document.querySelectorAll('.tab')[tab === 'run' ? 0 : tab === 'peers' ? 1 : tab === 'connect' ? 2 : tab === 'market' ? 3 : tab === 'ledger' ? 4 : tab === 'gpu' ? 5 : 0].classList.add('active');
-      document.getElementById('tab-' + tab).style.display = 'block';
+      const tabButtons = { run: 0, peers: 1, connect: 2, market: 3, gpu: 4 };
+      const btnIndex = tabButtons[tab];
+      if (btnIndex !== undefined) {
+        const tabs = document.querySelectorAll('.tab');
+        if (tabs[btnIndex]) tabs[btnIndex].classList.add('active');
+      }
+      
+      const tabEl = document.getElementById('tab-' + tab);
+      if (tabEl) tabEl.style.display = 'block';
+    }
+      
+      const tabEl = document.getElementById('tab-' + tab);
+      if (tabEl) tabEl.style.display = 'block';
     }
     
     function showError(msg) {
@@ -425,57 +436,3 @@
   </script>
 </body>
 </html>
-
-<!-- Marketplace Tab -->
-<div id="tab-market" class="card" style="display:none">
-  <h3>Available Compute Nodes</h3>
-  <button class="btn secondary" onclick="loadNodes()" style="margin-bottom:12px">🔄 Refresh</button>
-  <div class="output" id="nodeList">Loading...</div>
-  
-  <h3 style="margin-top:24px">Publish Task</h3>
-  <div style="display: grid; gap: 12px; margin-top:12px">
-    <div>
-      <label class="label">Operation</label>
-      <select id="marketOp">
-        <option value="fib">fib - Fibonacci</option>
-        <option value="sumFib">sumFib - Sum of Fibonacci</option>
-        <option value="sumSquares">sumSquares - Sum of Squares</option>
-      </select>
-    </div>
-    <div>
-      <label class="label">Credits</label>
-      <input type="number" id="taskCredits" value="10" min="1">
-    </div>
-    <button class="btn" onclick="publishTask()">📤 Publish Task</button>
-    <div class="output" id="taskResult">Task status...</div>
-  </div>
-  
-  <h3 style="margin-top:24px">Bid on Task</h3>
-  <div style="display: grid; gap: 12px; margin-top:12px">
-    <div>
-      <label class="label">Task ID</label>
-      <input type="text" id="bidTaskId" placeholder="task-123">
-    </div>
-    <div>
-      <label class="label">Your Bid (credits)</label>
-      <input type="number" id="bidCredits" value="8" min="1">
-    </div>
-    <div>
-      <label class="label">ETA (seconds)</label>
-      <input type="number" id="bidEta" value="30" min="1">
-    </div>
-    <button class="btn" onclick="placeBid()">💰 Place Bid</button>
-    <div class="output" id="bidResult">Bid status...</div>
-  </div>
-  
-  <h3 style="margin-top:24px">View Bids</h3>
-  <div style="display: grid; gap: 12px; margin-top:12px">
-    <div>
-      <label class="label">Task ID</label>
-      <input type="text" id="viewBidsTaskId" placeholder="task-123">
-    </div>
-    <button class="btn secondary" onclick="viewBids()">👁 View Bids</button>
-    <button class="btn" onclick="autoMatch()">⚡ Auto-Match Best Bid</button>
-    <div class="output" id="viewBidsResult">Bids will appear here...</div>
-  </div>
-</div>

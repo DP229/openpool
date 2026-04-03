@@ -91,8 +91,7 @@
       <h3>Execute Task</h3>
       <div style="display: grid; gap: 12px;">
         <div>
-          <label class="label">Operation</label>
-          <select id="op">
+          <label class="label" for="op">Operation</label>
             <option value="fib">fib - Fibonacci</option>
             <option value="sumFib">sumFib - Sum of Fibonacci</option>
             <option value="sumSquares">sumSquares - Sum of Squares</option>
@@ -100,7 +99,7 @@
           </select>
         </div>
         <div>
-          <label class="label">Argument (n)</label>
+          <label class="label" for="arg">Argument (n)</label>
           <input type="number" id="arg" value="30" min="1" max="10000">
         </div>
         <button class="btn" onclick="runTask()">▶ Run</button>
@@ -120,7 +119,7 @@
       <h3>Connect to Peer</h3>
       <div style="display: grid; gap: 12px;">
         <div>
-          <label class="label">Peer Multiaddr</label>
+          <label class="label" for="peerAddr">Peer Multiaddr</label>
           <input type="text" id="peerAddr" placeholder="/ip4/127.0.0.1/tcp/9000/p2p/Qm...">
         </div>
         <button class="btn" onclick="connectPeer()">🔗 Connect</button>
@@ -137,15 +136,14 @@
       <h3 style="margin-top:24px">Publish Task</h3>
       <div style="display: grid; gap: 12px; margin-top:12px">
         <div>
-          <label class="label">Operation</label>
-          <select id="marketOp">
+          <label class="label" for="marketOp">Operation</label>
             <option value="fib">fib - Fibonacci</option>
             <option value="sumFib">sumFib - Sum of Fibonacci</option>
             <option value="sumSquares">sumSquares - Sum of Squares</option>
           </select>
         </div>
         <div>
-          <label class="label">Credits</label>
+          <label class="label" for="taskCredits">Credits</label>
           <input type="number" id="taskCredits" value="10" min="1">
         </div>
         <button class="btn" onclick="publishTask()">📤 Publish Task</button>
@@ -169,8 +167,7 @@
       <h3 style="margin-top:24px">Run GPU Task</h3>
       <div style="display: grid; gap: 12px; margin-top:12px">
         <div>
-          <label class="label">Operation</label>
-          <select id="gpuOp">
+          <label class="label" for="gpuOp">Operation</label>
             <option value="matrixMul">matrixMul - Matrix Multiplication</option>
             <option value="conv2d">conv2d - 2D Convolution</option>
             <option value="gemm">gemm - General Matrix Multiply</option>
@@ -178,7 +175,7 @@
           </select>
         </div>
         <div>
-          <label class="label">Matrix Size</label>
+          <label class="label" for="gpuSize">Matrix Size</label>
           <input type="number" id="gpuSize" value="64" min="2" max="1024">
         </div>
         <button class="btn" onclick="runGPU()">🖥️ Execute on GPU</button>

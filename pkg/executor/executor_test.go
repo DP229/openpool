@@ -149,7 +149,7 @@ func TestExecuteWithCredits(t *testing.T) {
 	}
 
 	// Verify result is valid JSON
-	if !json.Valid(result) {
+	if !json.Valid(result.Result) {
 		t.Error("Execute() returned invalid JSON")
 	}
 }

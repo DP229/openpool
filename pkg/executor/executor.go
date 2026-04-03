@@ -13,9 +13,10 @@ import (
 
 // Executor runs WASM tasks and returns results.
 type Executor struct {
-	runtime     *wasm.Runtime
-	ledger      *ledger.Ledger
-	verifier    *verification.Verifier
+	runtime  *wasm.Runtime
+	ledger   *ledger.Ledger
+	verifier *verification.Verifier
+	nodeID   string
 }
 
 // New creates a new task executor.
@@ -23,8 +24,13 @@ func New(runtime *wasm.Runtime, ledger *ledger.Ledger, verifier *verification.Ve
 	return &Executor{runtime: runtime, ledger: ledger, verifier: verifier}
 }
 
+// SetNodeID sets the local node ID for verification records.
+func (e *Executor) SetNodeID(id string) {
+	e.nodeID = id
+}
+
 // Execute runs a task and returns the result.
-func (e *Executor) Execute(ctx context.Context, task *Task) (json.RawMessage, error) {
+func (e *Executor) Execute(ctx context.Context, task *Task) (*ExecutionResult, error) {
 	if e.runtime == nil {
 		return nil, fmt.Errorf("WASM runtime not available")
 	}
@@ -38,37 +44,91 @@ func (e *Executor) Execute(ctx context.Context, task *Task) (json.RawMessage, er
 		timeout = 4 * time.Hour
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	startTime := time.Now()
 
 	// Use WASM path from task, pass raw JSON input
-	result, err := e.runtime.RunTask(ctx, task.WASMPath, task.RawInput)
+	result, err := e.runtime.RunTask(execCtx, task.WASMPath, task.RawInput)
+	execDuration := time.Since(startTime)
+
+	// Check if context was cancelled (timeout or cancellation)
+	if ctx.Err() != nil {
+		if e.verifier != nil && task.ID != "" {
+			e.verifier.RecordVerification(context.Background(), verification.VerificationResult{
+				TaskID:       task.ID,
+				Method:       verification.MethodNone,
+				PrimaryNode:  task.NodeID,
+				VerifierNode: e.nodeID,
+				InputHash:    verification.HashInput(task.RawInput),
+				OutputHash:   "",
+				Match:        false,
+				DurationMs:   execDuration.Milliseconds(),
+				Timestamp:    time.Now().Unix(),
+				Error:        fmt.Sprintf("task cancelled: %v", ctx.Err()),
+			})
+		}
+		return nil, fmt.Errorf("execution cancelled: %w", ctx.Err())
+	}
+
 	if err != nil {
+		if e.verifier != nil && task.ID != "" {
+			e.verifier.RecordVerification(context.Background(), verification.VerificationResult{
+				TaskID:       task.ID,
+				Method:       verification.MethodNone,
+				PrimaryNode:  task.NodeID,
+				VerifierNode: e.nodeID,
+				InputHash:    verification.HashInput(task.RawInput),
+				OutputHash:   "",
+				Match:        false,
+				DurationMs:   execDuration.Milliseconds(),
+				Timestamp:    time.Now().Unix(),
+				Error:        fmt.Sprintf("execution failed: %v", err),
+			})
+		}
 		return nil, fmt.Errorf("execution failed: %w", err)
 	}
 
 	// Validate JSON output
 	if !json.Valid(result) {
+		if e.verifier != nil && task.ID != "" {
+			e.verifier.RecordVerification(context.Background(), verification.VerificationResult{
+				TaskID:       task.ID,
+				Method:       verification.MethodNone,
+				PrimaryNode:  task.NodeID,
+				VerifierNode: e.nodeID,
+				InputHash:    verification.HashInput(task.RawInput),
+				OutputHash:   verification.HashOutput(result),
+				Match:        false,
+				DurationMs:   execDuration.Milliseconds(),
+				Timestamp:    time.Now().Unix(),
+				Error:        "WASM returned invalid JSON",
+			})
+		}
 		return nil, fmt.Errorf("WASM returned invalid JSON")
 	}
 
-	durationMs := time.Since(startTime).Milliseconds()
-
-	// Record verification if verifier is enabled
+	// Record verification audit if enabled and task has an ID
+	var needsVerify bool
 	if e.verifier != nil && task.ID != "" {
 		inputHash := verification.HashInput(task.RawInput)
 		outputHash := verification.HashOutput(result)
-		
+		needsVerify = e.verifier.ShouldVerify(task.Credits)
+		method := verification.MethodNone
+		if needsVerify {
+			method = verification.MethodRedundant
+		}
+
 		verr := e.verifier.RecordVerification(context.Background(), verification.VerificationResult{
 			TaskID:       task.ID,
-			Method:       verification.MethodRedundant,
+			Method:       method,
 			PrimaryNode:  task.NodeID,
+			VerifierNode: e.nodeID,
 			InputHash:    inputHash,
 			OutputHash:   outputHash,
-			Match:        true, // First result always matches itself
-			DurationMs:   durationMs,
+			Match:        true,
+			DurationMs:   execDuration.Milliseconds(),
 			Timestamp:    time.Now().Unix(),
 		})
 		if verr != nil {
@@ -76,7 +136,22 @@ func (e *Executor) Execute(ctx context.Context, task *Task) (json.RawMessage, er
 		}
 	}
 
-	return result, nil
+	return &ExecutionResult{
+		Result:     result,
+		DurationMs: execDuration.Milliseconds(),
+		Verified:   needsVerify,
+		InputHash:  verification.HashInput(task.RawInput),
+		OutputHash: verification.HashOutput(result),
+	}, nil
+}
+
+// ExecutionResult contains the task result with verification metadata.
+type ExecutionResult struct {
+	Result     json.RawMessage `json:"result"`
+	DurationMs int64           `json:"duration_ms"`
+	Verified   bool            `json:"verified"`
+	InputHash  string          `json:"input_hash"`
+	OutputHash string          `json:"output_hash"`
 }
 
 type Task struct {

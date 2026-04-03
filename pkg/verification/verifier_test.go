@@ -386,3 +386,57 @@ func TestConcurrentRecord(t *testing.T) {
 		t.Errorf("History count = %d, want %d", len(history), numOps)
 	}
 }
+
+func TestVerifyAndDecide(t *testing.T) {
+	v, _ := New(":memory:", DefaultConfig())
+
+	// Single result - should pass
+	passed, reason := v.VerifyAndDecide([]json.RawMessage{json.RawMessage(`{"a":1}`)})
+	if !passed {
+		t.Errorf("Single result should pass, got: %s", reason)
+	}
+
+	// Two matching results
+	passed, reason = v.VerifyAndDecide([]json.RawMessage{
+		json.RawMessage(`{"a":1}`),
+		json.RawMessage(`{"a":1}`),
+	})
+	if !passed {
+		t.Errorf("Two matching results should pass, got: %s", reason)
+	}
+
+	// Two mismatching results
+	passed, reason = v.VerifyAndDecide([]json.RawMessage{
+		json.RawMessage(`{"a":1}`),
+		json.RawMessage(`{"a":2}`),
+	})
+	if passed {
+		t.Errorf("Two mismatching results should fail, got: %s", reason)
+	}
+
+	// 2 out of 3 match (66% < 100% threshold)
+	passed, reason = v.VerifyAndDecide([]json.RawMessage{
+		json.RawMessage(`{"a":1}`),
+		json.RawMessage(`{"a":1}`),
+		json.RawMessage(`{"a":2}`),
+	})
+	if passed {
+		t.Errorf("2/3 match should fail at 100%% threshold, reason: %s", reason)
+	}
+}
+
+func TestVerifyAndDecideLowerThreshold(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.AcceptThreshold = 0.5
+	v, _ := New(":memory:", cfg)
+
+	// 2 out of 3 match (66% >= 50% threshold)
+	passed, reason := v.VerifyAndDecide([]json.RawMessage{
+		json.RawMessage(`{"a":1}`),
+		json.RawMessage(`{"a":1}`),
+		json.RawMessage(`{"a":2}`),
+	})
+	if !passed {
+		t.Errorf("2/3 match should pass at 50%% threshold, reason: %s", reason)
+	}
+}

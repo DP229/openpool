@@ -302,6 +302,18 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Verifier (independent of WASM)
+	var v *verification.Verifier
+	if *flagVerify {
+		v, err = verification.NewWithDefaults(*flagLedger)
+		if err != nil {
+			log.Printf("⚠ Verifier init error: %v (continuing without)", err)
+			v = nil
+		} else {
+			log.Printf("✓ Task verifier ready")
+		}
+	}
+
 	// WASM executor (optional)
 	var exec *executor.Executor
 	if *flagWASM != "" {
@@ -309,122 +321,111 @@ func main() {
 		if err != nil {
 			log.Printf("WASM init error: %v", err)
 		} else {
-			{
-				// Create verifier if enabled
-				var v *verification.Verifier
-				if *flagVerify {
-					v, err = verification.NewWithDefaults(*flagLedger)
-					if err != nil {
-						log.Printf("⚠ Verifier init error: %v (continuing without)", err)
-						v = nil
-					} else {
-						log.Printf("✓ Task verifier ready")
-					}
-				}
-
-				exec = executor.New(r, db, v)
-				log.Printf("✓ WASM executor ready (native mode)")
-			}
+			exec = executor.New(r, db, v)
+			exec.SetNodeID(nodeID)
+			log.Printf("✓ WASM executor ready (native mode)")
 		}
-
-		// GPU Execution
-		var gpupool *gpu.Pool
-		if *flagGPU {
-			gpupool = gpu.New()
-			if err := gpupool.Detect(); err != nil {
-				log.Printf("⚠ GPU detection: %v (running in CPU mode)", err)
-			} else {
-				devs := gpupool.Devices()
-				log.Printf("✓ GPU enabled: %d device(s)", len(devs))
-				for _, d := range devs {
-					log.Printf("  - %s (%s, %dMB VRAM)", d.Name, d.Vendor, d.VRAMMB)
-				}
-			}
-		}
-
-		// Marketplace
-		var market *marketplace.Marketplace
-		if *flagMarket {
-			market, err = marketplace.New(*flagLedger, nodeID)
-			if err != nil {
-				log.Printf("⚠ Marketplace init error: %v", err)
-			} else {
-				multiaddr := ""
-				if len(node.Multiaddrs()) > 0 {
-					multiaddr = node.Multiaddrs()[0]
-				}
-
-				hwInfo, err := capabilities.Detect()
-				if err != nil {
-					log.Printf("⚠ Hardware detection error: %v", err)
-				}
-
-				caps := marketplace.NodeCapabilities{
-					CPUCores:    hwInfo.CPU.Cores,
-					CPUArch:     hwInfo.CPU.Arch,
-					RAMGB:       int(hwInfo.Memory.TotalGB),
-					StorageGB:   int(hwInfo.Storage.TotalGB),
-					WASMEnabled: *flagWASM != "",
-				}
-				if *flagGPU && gpupool != nil && gpupool.IsEnabled() {
-					devs := gpupool.Devices()
-					if len(devs) > 0 {
-						caps.GPU = &marketplace.GPU{
-							Present: true,
-							Model:   devs[0].Name,
-							VRAMGB:  devs[0].VRAMMB / 1024,
-						}
-					}
-				}
-
-				market.RegisterNode(marketplace.NodeInfo{
-					NodeID:       nodeID,
-					Multiaddr:    multiaddr,
-					Capabilities: caps,
-					Country:      hwInfo.Network.Country,
-					City:         hwInfo.Network.City,
-					PricePerTask: *flagPrice,
-					Status:       "online",
-				})
-				log.Printf("✓ Marketplace enabled (price: %d credits/task)", *flagPrice)
-				log.Printf("  Hardware: %d cores, %dGB RAM, %dGB storage", caps.CPUCores, caps.RAMGB, caps.StorageGB)
-			}
-		}
-
-		// Task Queue (always enabled)
-		taskQueue := queue.NewWorkerPool(100, runtime.NumCPU())
-		if *flagWASM != "" {
-			taskQueue.SetExecutor(func(ctx context.Context, task *queue.Task) (json.RawMessage, error) {
-				if exec == nil {
-					return nil, fmt.Errorf("no WASM runtime")
-				}
-				execTask := &executor.Task{
-					WASMPath:   *flagWASM,
-					RawInput:   task.Input,
-					TimeoutSec: task.Timeout,
-					Credits:    task.Credits,
-				}
-				result, err := exec.Execute(ctx, execTask)
-				if err != nil {
-					return nil, err
-				}
-				return json.RawMessage(result), nil
-			})
-			log.Printf("✓ Task queue ready (%d workers, 100 task depth)", runtime.NumCPU())
-		}
-
-		// HTTP API
-		if *flagHTTP > 0 {
-			go serveHTTP(node, db, nodeID, exec, *flagHTTP, market, gpupool, taskQueue)
-		}
-
-		// Wait for shutdown
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-		<-sig
-		fmt.Println("■ Shutting down...")
-		node.Close()
 	}
+
+	// GPU Execution
+	var gpupool *gpu.Pool
+	if *flagGPU {
+		gpupool = gpu.New()
+		if err := gpupool.Detect(); err != nil {
+			log.Printf("⚠ GPU detection: %v (running in CPU mode)", err)
+		} else {
+			devs := gpupool.Devices()
+			log.Printf("✓ GPU enabled: %d device(s)", len(devs))
+			for _, d := range devs {
+				log.Printf("  - %s (%s, %dMB VRAM)", d.Name, d.Vendor, d.VRAMMB)
+			}
+		}
+	}
+
+	// Marketplace
+	var market *marketplace.Marketplace
+	if *flagMarket {
+		market, err = marketplace.New(*flagLedger, nodeID)
+		if err != nil {
+			log.Printf("⚠ Marketplace init error: %v", err)
+		} else {
+			multiaddr := ""
+			if len(node.Multiaddrs()) > 0 {
+				multiaddr = node.Multiaddrs()[0]
+			}
+
+			hwInfo, err := capabilities.Detect()
+			if err != nil {
+				log.Printf("⚠ Hardware detection error: %v", err)
+			}
+
+			caps := marketplace.NodeCapabilities{
+				CPUCores:    hwInfo.CPU.Cores,
+				CPUArch:     hwInfo.CPU.Arch,
+				RAMGB:       int(hwInfo.Memory.TotalGB),
+				StorageGB:   int(hwInfo.Storage.TotalGB),
+				WASMEnabled: *flagWASM != "",
+			}
+			if *flagGPU && gpupool != nil && gpupool.IsEnabled() {
+				devs := gpupool.Devices()
+				if len(devs) > 0 {
+					caps.GPU = &marketplace.GPU{
+						Present: true,
+						Model:   devs[0].Name,
+						VRAMGB:  devs[0].VRAMMB / 1024,
+					}
+				}
+			}
+
+			market.RegisterNode(marketplace.NodeInfo{
+				NodeID:       nodeID,
+				Multiaddr:    multiaddr,
+				Capabilities: caps,
+				Country:      hwInfo.Network.Country,
+				City:         hwInfo.Network.City,
+				PricePerTask: *flagPrice,
+				Status:       "online",
+			})
+			log.Printf("✓ Marketplace enabled (price: %d credits/task)", *flagPrice)
+			log.Printf("  Hardware: %d cores, %dGB RAM, %dGB storage", caps.CPUCores, caps.RAMGB, caps.StorageGB)
+		}
+	}
+
+	// Task Queue (always enabled)
+	taskQueue := queue.NewWorkerPool(100, runtime.NumCPU())
+	if *flagWASM != "" {
+		taskQueue.SetExecutor(func(ctx context.Context, task *queue.Task) (json.RawMessage, error) {
+			if exec == nil {
+				return nil, fmt.Errorf("no WASM runtime")
+			}
+			execTask := &executor.Task{
+				ID:         task.ID,
+				NodeID:     nodeID,
+				WASMPath:   *flagWASM,
+				RawInput:   task.Input,
+				TimeoutSec: task.Timeout,
+				Credits:    task.Credits,
+			}
+			result, err := exec.Execute(ctx, execTask)
+			if err != nil {
+				return nil, err
+			}
+			return result.Result, nil
+		})
+		log.Printf("✓ Task queue ready (%d workers, 100 task depth)", runtime.NumCPU())
+	}
+
+	// HTTP API
+	if *flagHTTP > 0 {
+		go serveHTTP(node, db, nodeID, exec, v, *flagHTTP, market, gpupool, taskQueue)
+	}
+
+	// Wait for shutdown
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	fmt.Println("■ Shutting down...")
+	node.Close()
 }
 
 // discoverPeers queries the DHT for peers and prints what it finds.
@@ -507,7 +508,7 @@ func getFreeRAM() int {
 	return 0
 }
 
-func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.Executor, port int, market *marketplace.Marketplace, gpupool *gpu.Pool, taskQueue *queue.WorkerPool) {
+func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.Executor, v *verification.Verifier, port int, market *marketplace.Marketplace, gpupool *gpu.Pool, taskQueue *queue.WorkerPool) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -590,6 +591,8 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 
 		// Create task with raw input
 		task := &executor.Task{
+			ID:         "http-" + time.Now().Format("150405.000"),
+			NodeID:     nodeID,
 			WASMPath:   *flagWASM,
 			RawInput:   rawReq,
 			TimeoutSec: timeoutSec,
@@ -608,7 +611,13 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "result": string(result), "credits_deducted": task.Credits})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":           "ok",
+			"result":           string(result.Result),
+			"credits_deducted": task.Credits,
+			"duration_ms":      result.DurationMs,
+			"verified":         result.Verified,
+		})
 	})
 	fmt.Printf("🌐 HTTP API: http://localhost:%d/\n", port)
 	fmt.Printf("   Endpoints:\n")
@@ -623,17 +632,63 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 
 	// Verification history endpoint
 	mux.HandleFunc("/verify", func(w http.ResponseWriter, r *http.Request) {
-		taskID := r.URL.Query().Get("task_id")
-		if taskID == "" {
-			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "task_id required"})
+		if v == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "verification disabled"})
 			return
 		}
-		// This would need verifier passed to serveHTTP - skip for now
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"task_id": taskID,
-			"status":  "ok",
-			"note":    "verification API needs verifier instance in serveHTTP",
-		})
+		taskID := r.URL.Query().Get("task_id")
+		if taskID == "" {
+			// Return all verification history
+			stats, err := v.GetAllNodeStats()
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"node_stats": stats})
+			return
+		}
+		results, err := v.GetVerificationHistory(taskID)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"task_id": taskID, "results": results})
+	})
+
+	// Slashing history endpoint
+	mux.HandleFunc("/slashing", func(w http.ResponseWriter, r *http.Request) {
+		if v == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "verification disabled"})
+			return
+		}
+		nodeID := r.URL.Query().Get("node_id")
+		if nodeID == "" {
+			nodeID = nodeID
+		}
+		results, err := v.GetSlashingHistory(nodeID)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"node_id": nodeID, "slashing_events": results})
+	})
+
+	// Slashing history endpoint
+	mux.HandleFunc("/slashing", func(w http.ResponseWriter, r *http.Request) {
+		if v == nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "verification disabled"})
+			return
+		}
+		nodeID := r.URL.Query().Get("node_id")
+		if nodeID == "" {
+			nodeID = nodeID
+		}
+		results, err := v.GetSlashingHistory(nodeID)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"node_id": nodeID, "slashing_events": results})
 	})
 
 	// Node stats endpoint

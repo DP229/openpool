@@ -38,6 +38,8 @@ check_go() {
             export PATH="$HOME/go125/bin:$PATH"
         elif [ -f "$HOME/go/bin/go" ]; then
             export PATH="$HOME/go/bin:$PATH"
+        elif [ -f "/usr/local/go/bin/go" ]; then
+            export PATH="/usr/local/go/bin:$PATH"
         else
             error "Go not found. Install Go or set PATH to Go binary."
             exit 1

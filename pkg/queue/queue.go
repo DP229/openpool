@@ -5,23 +5,27 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
 
 // Task represents a queued task.
 type Task struct {
-	ID        string          `json:"id"`
-	Op        string          `json:"op"`
-	Input     json.RawMessage `json:"input"`
-	Priority  int             `json:"priority"` // Higher = more important
-	Credits   int             `json:"credits"`
-	Timeout   int             `json:"timeout_sec"`
-	Submitted time.Time       `json:"submitted"`
-	Status    string          `json:"status"` // pending, running, completed, failed
-	Result    json.RawMessage `json:"result,omitempty"`
-	Error     string          `json:"error,omitempty"`
-	Completed *time.Time      `json:"completed,omitempty"`
+	ID         string          `json:"id"`
+	Op         string          `json:"op"`
+	Input      json.RawMessage `json:"input"`
+	Priority   int             `json:"priority"` // Higher = more important
+	Credits    int             `json:"credits"`
+	Timeout    int             `json:"timeout_sec"`
+	MaxRetries int             `json:"max_retries"` // Max retry attempts (0 = no retry)
+	Retries    int             `json:"retries"`     // Current retry count
+	Submitted  time.Time       `json:"submitted"`
+	Status     string          `json:"status"` // pending, running, completed, failed
+	Result     json.RawMessage `json:"result,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	Completed  *time.Time      `json:"completed,omitempty"`
+	LastErr    string          `json:"last_error,omitempty"`
 }
 
 // Queue manages pending tasks with priority ordering.
@@ -331,11 +335,20 @@ func (w *Worker) run(wg *sync.WaitGroup) {
 		result, err := w.exec(ctx, task)
 		cancel()
 
-		task.Completed = timePtr(time.Now())
 		if err != nil {
-			task.Status = "failed"
-			task.Error = err.Error()
+			task.Retries++
+			task.LastErr = err.Error()
+			if task.Retries <= task.MaxRetries {
+				task.Status = "pending"
+				task.Error = ""
+				w.queue.Enqueue(task)
+			} else {
+				task.Completed = timePtr(time.Now())
+				task.Status = "failed"
+				task.Error = fmt.Sprintf("failed after %d retries: %s", task.Retries-1, err.Error())
+			}
 		} else {
+			task.Completed = timePtr(time.Now())
 			task.Status = "completed"
 			task.Result = result
 		}

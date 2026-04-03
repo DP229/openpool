@@ -23,6 +23,7 @@ import (
 	"github.com/dp229/openpool/pkg/gpu"
 	"github.com/dp229/openpool/pkg/ledger"
 	"github.com/dp229/openpool/pkg/marketplace"
+	"github.com/dp229/openpool/pkg/metrics"
 	"github.com/dp229/openpool/pkg/p2p"
 	"github.com/dp229/openpool/pkg/queue"
 	"github.com/dp229/openpool/pkg/scheduler"
@@ -415,9 +416,14 @@ func main() {
 		log.Printf("✓ Task queue ready (%d workers, 100 task depth)", runtime.NumCPU())
 	}
 
+	// Metrics collector
+	mc := metrics.NewCollector()
+	mc.Set("openpool_cpu_cores", "Number of CPU cores", float64(runtime.NumCPU()), nil)
+	mc.Set("openpool_free_ram_mb", "Available RAM in MB", float64(getFreeRAM()), nil)
+
 	// HTTP API
 	if *flagHTTP > 0 {
-		go serveHTTP(node, db, nodeID, exec, v, *flagHTTP, market, gpupool, taskQueue)
+		go serveHTTP(node, db, nodeID, exec, v, *flagHTTP, market, gpupool, taskQueue, mc)
 	}
 
 	// Wait for shutdown
@@ -508,7 +514,7 @@ func getFreeRAM() int {
 	return 0
 }
 
-func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.Executor, v *verification.Verifier, port int, market *marketplace.Marketplace, gpupool *gpu.Pool, taskQueue *queue.WorkerPool) {
+func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.Executor, v *verification.Verifier, port int, market *marketplace.Marketplace, gpupool *gpu.Pool, taskQueue *queue.WorkerPool, mc *metrics.Collector) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -601,9 +607,13 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 
 		result, err := exec.Execute(ctx, task)
 		if err != nil {
+			mc.Inc("openpool_tasks_failed_total", "Total failed tasks", map[string]string{"op": req.Op})
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
 			return
 		}
+
+		mc.Inc("openpool_tasks_completed_total", "Total completed tasks", map[string]string{"op": req.Op})
+		mc.Observe("openpool_task_duration_ms", "Task execution duration", float64(result.DurationMs), map[string]string{"op": req.Op})
 
 		// Deduct credits
 		if task.Credits > 0 {
@@ -1026,6 +1036,39 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(hwInfo)
+	})
+
+	// Prometheus metrics endpoint
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		if mc == nil {
+			http.Error(w, "metrics not enabled", 503)
+			return
+		}
+
+		// Update dynamic gauges
+		mc.Set("openpool_free_ram_mb", "Available RAM in MB", float64(getFreeRAM()), nil)
+		mc.Set("openpool_connected_peers", "Number of connected peers", float64(len(node.Host.Network().Peers())), nil)
+		mc.Set("openpool_credits", "Current node credits", float64(db.GetCredits(nodeID)), nil)
+
+		if taskQueue != nil {
+			stats := taskQueue.Stats()
+			if queueSize, ok := stats["queue_size"].(int); ok {
+				mc.Set("openpool_queue_size", "Current queue depth", float64(queueSize), nil)
+			}
+			if workers, ok := stats["workers"].(int); ok {
+				mc.Set("openpool_workers", "Number of workers", float64(workers), nil)
+			}
+			if running, ok := stats["running"].(bool); ok {
+				val := 0.0
+				if running {
+					val = 1.0
+				}
+				mc.Set("openpool_queue_running", "Whether queue is running", val, nil)
+			}
+		}
+
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		w.Write([]byte(mc.FormatPrometheus()))
 	})
 
 	addr := fmt.Sprintf(":%d", port)

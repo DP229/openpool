@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -233,5 +234,71 @@ func TestQueueEmpty(t *testing.T) {
 	task = q.Peek()
 	if task != nil {
 		t.Error("Peek on empty queue should return nil")
+	}
+}
+
+func TestWorkerPoolRetry(t *testing.T) {
+	wp := NewWorkerPool(10, 1)
+
+	attempts := 0
+	var mu sync.Mutex
+
+	handler := func(ctx context.Context, task *Task) (json.RawMessage, error) {
+		mu.Lock()
+		attempts++
+		current := attempts
+		mu.Unlock()
+
+		if current < 3 {
+			return nil, fmt.Errorf("transient error %d", current)
+		}
+		return json.RawMessage(`{"ok":true}`), nil
+	}
+
+	wp.SetExecutor(handler)
+
+	task := &Task{
+		ID:         "retry-task",
+		Op:         "fib",
+		MaxRetries: 3,
+		Timeout:    5,
+	}
+	wp.Submit(task)
+
+	time.Sleep(200 * time.Millisecond)
+	wp.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if attempts != 3 {
+		t.Errorf("Expected 3 attempts, got %d", attempts)
+	}
+}
+
+func TestWorkerPoolRetryExhausted(t *testing.T) {
+	wp := NewWorkerPool(10, 1)
+
+	handler := func(ctx context.Context, task *Task) (json.RawMessage, error) {
+		return nil, fmt.Errorf("always fails")
+	}
+
+	wp.SetExecutor(handler)
+
+	task := &Task{
+		ID:         "fail-task",
+		Op:         "fib",
+		MaxRetries: 2,
+		Timeout:    5,
+	}
+	wp.Submit(task)
+
+	time.Sleep(200 * time.Millisecond)
+	wp.Stop()
+
+	if task.Status != "failed" {
+		t.Errorf("Task status = %s, want failed", task.Status)
+	}
+	if task.Retries != 3 {
+		t.Errorf("Task retries = %d, want 3 (initial + 2 retries)", task.Retries)
 	}
 }

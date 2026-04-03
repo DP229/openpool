@@ -27,6 +27,8 @@ import (
 	"github.com/dp229/openpool/pkg/p2p"
 	"github.com/dp229/openpool/pkg/queue"
 	"github.com/dp229/openpool/pkg/scheduler"
+	"github.com/dp229/openpool/pkg/task"
+	"github.com/dp229/openpool/pkg/task/handlers"
 	"github.com/dp229/openpool/pkg/verification"
 	"github.com/dp229/openpool/pkg/wasm"
 )
@@ -431,6 +433,10 @@ func main() {
 	if *flagRegistry != "" {
 		go registerWithRegistry(*flagRegistry, nodeID, node.Multiaddrs(), runtime.NumCPU(), *flagGPU)
 	}
+
+	// Initialize task registry
+	handlers.Init()
+	fmt.Printf("✓ Task handlers ready: %v\n", handlers.List())
 
 	// Wait for shutdown
 	sig := make(chan os.Signal, 1)
@@ -914,6 +920,34 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 			return
 		}
 
+		// Try task registry first (new format)
+		taskReg := task.Get()
+		if _, ok := taskReg.GetHandler(req.Op); ok {
+			// Use new task registry
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			
+			input, _ := json.Marshal(req.Arg)
+			result, err := taskReg.Execute(ctx, req.Op, fmt.Sprintf("task-%d", time.Now().Unix()), nodeID, input)
+			
+			if err != nil {
+				json.NewEncoder(w).Encode(map[string]interface{}{"status": "error", "error": err.Error()})
+				return
+			}
+			
+			result.ID = fmt.Sprintf("task-%d", time.Now().Unix())
+			result.NodeID = nodeID
+			
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "ok",
+				"result": result.Output,
+				"metrics": result.Metrics,
+				"runtime": "native",
+			})
+			return
+		}
+
+		// Fall back to WASM runtime (legacy format)
 		opID := wasm.OpToID(req.Op)
 		if opID < 0 {
 			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "unknown op"})

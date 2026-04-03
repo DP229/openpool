@@ -683,24 +683,6 @@ func serveHTTP(node *p2p.Node, db *ledger.Ledger, nodeID string, exec *executor.
 		json.NewEncoder(w).Encode(map[string]interface{}{"node_id": nodeID, "slashing_events": results})
 	})
 
-	// Slashing history endpoint
-	mux.HandleFunc("/slashing", func(w http.ResponseWriter, r *http.Request) {
-		if v == nil {
-			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "verification disabled"})
-			return
-		}
-		nodeID := r.URL.Query().Get("node_id")
-		if nodeID == "" {
-			nodeID = nodeID
-		}
-		results, err := v.GetSlashingHistory(nodeID)
-		if err != nil {
-			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"node_id": nodeID, "slashing_events": results})
-	})
-
 	// Node stats endpoint
 	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
 		if market == nil {

@@ -8,14 +8,14 @@ import (
 
 // Device represents a GPU device.
 type Device struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Vendor      string `json:"vendor"`
-	VRAMMB      int    `json:"vram_mb"`
-	ComputeUnits int   `json:"compute_units"`
+	ID            int    `json:"id"`
+	Name          string `json:"name"`
+	Vendor        string `json:"vendor"`
+	VRAMMB        int    `json:"vram_mb"`
+	ComputeUnits  int    `json:"compute_units"`
 	DriverVersion string `json:"driver_version"`
-	CUDABinding bool   `json:"cuda_binding"`
-	OpenCLBinding bool `json:"opencl_binding"`
+	CUDABinding   bool   `json:"cuda_binding"`
+	OpenCLBinding bool   `json:"opencl_binding"`
 }
 
 // Pool manages GPU compute resources.
@@ -91,7 +91,7 @@ func detectCUDA() ([]Device, error) {
 	return nil, fmt.Errorf("CUDA not linked")
 }
 
-// OpenCL detection  
+// OpenCL detection
 func detectOpenCL() ([]Device, error) {
 	// In production, this would use go-opencl
 	// For now, return empty to fall back to CPU
@@ -101,10 +101,10 @@ func detectOpenCL() ([]Device, error) {
 // GPU operations - these would execute actual GPU kernels in production
 
 type MatrixMulInput struct {
-	A [][]float32 `json:"a"`
-	B [][]float32 `json:"b"`
-	TransposeA bool `json:"transpose_a"`
-	TransposeB bool `json:"transpose_b"`
+	A          [][]float32 `json:"a"`
+	B          [][]float32 `json:"b"`
+	TransposeA bool        `json:"transpose_a"`
+	TransposeB bool        `json:"transpose_b"`
 }
 
 func (p *Pool) executeMatrixMul(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
@@ -134,16 +134,16 @@ func (p *Pool) executeMatrixMul(ctx context.Context, input json.RawMessage) (jso
 	}
 
 	return json.Marshal(map[string]interface{}{
-		"op":       "matrixMul",
-		"result":   result,
-		"device":   p.devices[0].Name,
-		"runtime":  "gpu-fallback",
+		"op":      "matrixMul",
+		"result":  result,
+		"device":  p.devices[0].Name,
+		"runtime": "gpu-fallback",
 	})
 }
 
 type Conv2DInput struct {
-	Input   [][][]float32 `json:"input"`   // H x W x C
-	Kernel  [][][]float32 `json:"kernel"`  // KH x KW x C
+	Input   [][][]float32 `json:"input"`  // H x W x C
+	Kernel  [][][]float32 `json:"kernel"` // KH x KW x C
 	Stride  int           `json:"stride"`
 	Padding int           `json:"padding"`
 }
@@ -172,23 +172,23 @@ func (p *Pool) executeConv2D(ctx context.Context, input json.RawMessage) (json.R
 	}
 
 	return json.Marshal(map[string]interface{}{
-		"op":       "conv2d",
-		"result":   result,
-		"device":   p.devices[0].Name,
-		"runtime":  "gpu-fallback",
+		"op":      "conv2d",
+		"result":  result,
+		"device":  p.devices[0].Name,
+		"runtime": "gpu-fallback",
 	})
 }
 
 type GEMMInput struct {
-	A []float32 `json:"a"`
-	B []float32 `json:"b"`
-	M int       `json:"m"`
-	N int       `json:"n"`
-	K int       `json:"k"`
-	TransposeA bool `json:"transpose_a"`
-	TransposeB bool `json:"transpose_b"`
-	Alpha float32 `json:"alpha"`
-	Beta  float32 `json:"beta"`
+	A          []float32 `json:"a"`
+	B          []float32 `json:"b"`
+	M          int       `json:"m"`
+	N          int       `json:"n"`
+	K          int       `json:"k"`
+	TransposeA bool      `json:"transpose_a"`
+	TransposeB bool      `json:"transpose_b"`
+	Alpha      float32   `json:"alpha"`
+	Beta       float32   `json:"beta"`
 }
 
 func (p *Pool) executeGEMM(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
@@ -220,9 +220,9 @@ func (p *Pool) executeGEMM(ctx context.Context, input json.RawMessage) (json.Raw
 }
 
 type FFTInput struct {
-	Real []float32 `json:"real"`
-	Imag []float32 `json:"imag"`
-	Inverse bool   `json:"inverse"`
+	Real    []float32 `json:"real"`
+	Imag    []float32 `json:"imag"`
+	Inverse bool      `json:"inverse"`
 }
 
 func (p *Pool) executeFFT(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
@@ -240,9 +240,27 @@ func (p *Pool) executeFFT(ctx context.Context, input json.RawMessage) (json.RawM
 	realOut := make([]float32, N)
 	imagOut := make([]float32, N)
 
+	// Calculate log2(N) for bit-reversal width
+	bits := 0
+	for t := N; t > 1; t >>= 1 {
+		bits++
+	}
+
 	// Bit-reversal permutation
 	for i := 0; i < N; i++ {
-		j := bitReverse(i)
+		j := bitReverse(i, bits)
+		if j > i && j < N {
+			realOut[i], realOut[j] = in.Real[j], in.Real[i]
+			imagOut[i], imagOut[j] = in.Imag[j], in.Imag[i]
+		} else if j == i {
+			realOut[i] = in.Real[i]
+			imagOut[i] = in.Imag[i]
+		}
+	}
+
+	// Bit-reversal permutation
+	for i := 0; i < N; i++ {
+		j := bitReverse(i, bits)
 		if j > i && j < N {
 			realOut[i], realOut[j] = in.Real[j], in.Real[i]
 			imagOut[i], imagOut[j] = in.Imag[j], in.Imag[i]
@@ -270,24 +288,25 @@ func (p *Pool) executeFFT(ctx context.Context, input json.RawMessage) (json.RawM
 				realOut[j] += tReal
 				imagOut[j] += tImag
 			}
-			wr, wi = wr*float32(angle) - wi*float32(angle), wr*float32(angle) + wi*float32(angle)
+			wr, wi = wr*float32(angle)-wi*float32(angle), wr*float32(angle)+wi*float32(angle)
 		}
 	}
 
 	return json.Marshal(map[string]interface{}{
-		"op":       "fft",
-		"real":     realOut,
-		"imag":     imagOut,
-		"device":   p.devices[0].Name,
-		"runtime":  "gpu-fallback",
+		"op":      "fft",
+		"real":    realOut,
+		"imag":    imagOut,
+		"device":  p.devices[0].Name,
+		"runtime": "gpu-fallback",
 	})
 }
 
-// Bit-reversal for FFT
-func bitReverse(n int) int {
+// Bit-reversal for FFT: reverses exactly log2(N) bits of n
+func bitReverse(n int, bits int) int {
 	result := 0
-	for i := n; i > 0; i >>= 1 {
-		result = (result << 1) | (i & 1)
+	for i := 0; i < bits; i++ {
+		result = (result << 1) | (n & 1)
+		n >>= 1
 	}
 	return result
 }

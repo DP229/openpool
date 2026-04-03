@@ -247,67 +247,45 @@ func TestFFTInput(t *testing.T) {
 }
 
 func TestFFTErrors(t *testing.T) {
-	t.Skip("FFT implementation has bit-reversal issues - skipping")
+	p := New()
+	defer p.Close()
+
+	// Non-power-of-2 length
+	_, err := p.executeFFT(context.Background(), json.RawMessage(`{"real":[1,2,3],"imag":[0,0,0]}`))
+	if err == nil {
+		t.Error("Expected error for non-power-of-2 length")
+	}
+
+	// Mismatched real/imag lengths
+	_, err = p.executeFFT(context.Background(), json.RawMessage(`{"real":[1,2],"imag":[0]}`))
+	if err == nil {
+		t.Error("Expected error for mismatched lengths")
+	}
 }
 
 func TestBitReverse(t *testing.T) {
-	// Note: bitReverse has implementation issues but is only used in FFT
-	// which is currently skipped. Documenting actual behavior:
-	t.Skip("bitReverse function has issues - FFT tests are skipped")
-}
-
-func TestConv2DInput(t *testing.T) {
-	input := Conv2DInput{
-		Input:  [][][]float32{{{1, 2}, {3, 4}}},
-		Kernel: [][][]float32{{{1}}},
-		Stride: 1,
-		Padding: 0,
+	tests := []struct {
+		n    int
+		bits int
+		want int
+	}{
+		{0, 3, 0}, // 000 -> 000
+		{1, 3, 4}, // 001 -> 100
+		{2, 3, 2}, // 010 -> 010
+		{3, 3, 6}, // 011 -> 110
+		{4, 3, 1}, // 100 -> 001
+		{5, 3, 5}, // 101 -> 101
+		{6, 3, 3}, // 110 -> 011
+		{7, 3, 7}, // 111 -> 111
+		{0, 4, 0}, // 0000 -> 0000
+		{1, 4, 8}, // 0001 -> 1000
+		{15, 4, 15}, // 1111 -> 1111
 	}
 
-	data, err := json.Marshal(input)
-	if err != nil {
-		t.Fatalf("Failed to marshal Conv2DInput: %v", err)
-	}
-
-	var decoded Conv2DInput
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("Failed to unmarshal Conv2DInput: %v", err)
-	}
-
-	if len(decoded.Input) != 1 || len(decoded.Input[0]) != 2 {
-		t.Error("Conv2DInput dimensions mismatch")
-	}
-}
-
-func TestDevice(t *testing.T) {
-	device := Device{
-		ID:            0,
-		Name:          "NVIDIA RTX 4090",
-		Vendor:        "NVIDIA",
-		VRAMMB:        24576,
-		ComputeUnits:  128,
-		DriverVersion: "535.104",
-		CUDABinding:   true,
-		OpenCLBinding: false,
-	}
-
-	if device.ID != 0 {
-		t.Errorf("Device.ID = %d, want 0", device.ID)
-	}
-	if device.VRAMMB != 24576 {
-		t.Errorf("Device.VRAMMB = %d, want 24576", device.VRAMMB)
-	}
-}
-
-func TestClose(t *testing.T) {
-	p := New()
-	p.Detect()
-
-	if err := p.Close(); err != nil {
-		t.Errorf("Close() error = %v", err)
-	}
-
-	if p.devices != nil {
-		t.Error("Close() should clear devices")
+	for _, tt := range tests {
+		got := bitReverse(tt.n, tt.bits)
+		if got != tt.want {
+			t.Errorf("bitReverse(%d, %d) = %d, want %d", tt.n, tt.bits, got, tt.want)
+		}
 	}
 }

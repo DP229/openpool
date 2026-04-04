@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OpenPool - Decentralized AI Compute</title>
+  <title>OpenPool - Secure P2P Compute Marketplace</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #e0e0e0; min-height: 100vh; }
@@ -52,13 +52,6 @@
     
     .output { background: #0a0a12; border: 1px solid #222; border-radius: 8px; padding: 16px; min-height: 80px; max-height: 300px; overflow-y: auto; font-family: 'Monaco', 'Menlo', monospace; font-size: 13px; white-space: pre-wrap; color: #00ff88; }
     
-    .agent-task-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-    .agent-task-card { background: linear-gradient(145deg, #1a1a2e, #12121a); border: 1px solid #333; border-radius: 12px; padding: 20px; cursor: pointer; transition: all 0.2s; }
-    .agent-task-card:hover { border-color: #00d4ff; transform: translateY(-2px); }
-    .agent-task-card .icon { font-size: 28px; margin-bottom: 8px; }
-    .agent-task-card h4 { color: #fff; margin-bottom: 4px; }
-    .agent-task-card p { color: #888; font-size: 12px; }
-    
     .section-title { font-size: 20px; color: #fff; margin-bottom: 16px; }
     .divider { border-top: 1px solid #222; margin: 32px 0; }
     
@@ -67,6 +60,12 @@
     .metric .value { color: #fff; font-weight: 600; }
     .metric .value.good { color: #00ff88; }
     .metric .value.warning { color: #ff8800; }
+    
+    .task-card { background: linear-gradient(145deg, #1a1a2e, #12121a); border: 1px solid #333; border-radius: 12px; padding: 20px; cursor: pointer; transition: all 0.2s; }
+    .task-card:hover { border-color: #00d4ff; transform: translateY(-2px); }
+    .task-card .icon { font-size: 28px; margin-bottom: 8px; }
+    .task-card h4 { color: #fff; margin-bottom: 4px; }
+    .task-card p { color: #888; font-size: 12px; }
     
     @media (max-width: 768px) {
       .hero h1 { font-size: 1.8rem; }
@@ -78,13 +77,13 @@
   <div class="container">
     <!-- Hero -->
     <div class="hero">
-      <h1>🤖 OpenPool</h1>
-      <p>Decentralized GPU compute network. Run AI models, process data, and earn by sharing your GPU. A fraction of cloud cost.</p>
+      <h1>🌐 OpenPool</h1>
+      <p>Secure P2P Compute Marketplace. Run distributed compute tasks across a global network of volunteered hardware. CFD, rendering, scientific computing, and more.</p>
       <div style="margin-top: 20px;">
-        <span class="badge blue">💻 CPU Compute</span>
-        <span class="badge purple">🎮 GPU Compute</span>
-        <span class="badge green">🧠 LLM Inference</span>
-        <span class="badge orange">⚡ Fast Results</span>
+        <span class="badge blue">💻 CFD Simulation</span>
+        <span class="badge purple">🎨 Rendering</span>
+        <span class="badge green">🔬 Scientific Computing</span>
+        <span class="badge orange">⚡ Batch Processing</span>
       </div>
     </div>
     
@@ -95,10 +94,6 @@
         <div class="label">Active Nodes</div>
       </div>
       <div class="stat-card">
-        <div class="value" id="gpuCount">0</div>
-        <div class="label">GPUs Available</div>
-      </div>
-      <div class="stat-card">
         <div class="value" id="peerCount">0</div>
         <div class="label">Connected Peers</div>
       </div>
@@ -106,14 +101,17 @@
         <div class="value" id="taskCount">0</div>
         <div class="label">Tasks Completed</div>
       </div>
+      <div class="stat-card">
+        <div class="value" id="credits">0</div>
+        <div class="label">Your Credits</div>
+      </div>
     </div>
     
     <!-- Quick Actions -->
     <div class="tabs">
       <button class="tab active" onclick="showTab('dashboard')">📊 Dashboard</button>
-      <button class="tab" onclick="showTab('agent')">🤖 AI Agent</button>
       <button class="tab" onclick="showTab('compute')">⚡ Compute</button>
-      <button class="tab" onclick="showTab('nodes')">🌐 Network</button>
+      <button class="tab" onclick="showTab('network')">🌐 Network</button>
       <button class="tab" onclick="showTab('earn')">💰 Earn</button>
     </div>
     
@@ -121,19 +119,24 @@
     <div id="tab-dashboard">
       <div class="grid">
         <div class="card">
-          <div class="icon">🚀</div>
-          <h3>AI Inference</h3>
-          <p>Run LLaMA, Mistral, Stable Diffusion and more. Access powerful AI models through the distributed network.</p>
+          <div class="icon">🔬</div>
+          <h3>CFD & Simulation</h3>
+          <p>Run computational fluid dynamics, finite element analysis, and physics simulations on distributed hardware.</p>
+        </div>
+        <div class="card">
+          <div class="icon">🎨</div>
+          <h3>Rendering</h3>
+          <p>Distributed 3D rendering, ray tracing, and video processing across multiple GPUs.</p>
         </div>
         <div class="card">
           <div class="icon">📊</div>
           <h3>Batch Processing</h3>
-          <p>Process large datasets, run parallel computations, and handle workloads too big for a single machine.</p>
+          <p>Process large datasets, ETL pipelines, and parallel computations efficiently.</p>
         </div>
         <div class="card">
-          <div class="icon">💾</div>
-          <h3>Model Training</h3>
-          <p>Distributed training with LoRA fine-tuning. Collaborate with the network to train AI models.</p>
+          <div class="icon">📦</div>
+          <h3>WASM Compute</h3>
+          <p>Execute WebAssembly workloads in a secure sandboxed environment.</p>
         </div>
       </div>
       
@@ -149,152 +152,127 @@
           <div class="label">Status</div>
         </div>
         <div class="stat-card">
-          <div class="value" id="credits">0</div>
-          <div class="label">Credits</div>
+          <div class="value" id="cpuCores">-</div>
+          <div class="label">CPU Cores</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="ramFree">-</div>
+          <div class="label">Free RAM (MB)</div>
+        </div>
+      </div>
+      
+      <!-- Health Metrics -->
+      <div class="card" style="margin-bottom: 24px;">
+        <h3>📈 System Health</h3>
+        <div id="healthMetrics">
+          <div class="metric">
+            <span class="label">Worker Pool Status</span>
+            <span class="value" id="workerStatus">-</span>
+          </div>
+          <div class="metric">
+            <span class="label">Tasks Completed</span>
+            <span class="value good" id="tasksCompleted">0</span>
+          </div>
+          <div class="metric">
+            <span class="label">Tasks Failed</span>
+            <span class="value" id="tasksFailed">0</span>
+          </div>
+          <div class="metric">
+            <span class="label">Average Latency</span>
+            <span class="value" id="avgLatency">-</span>
+          </div>
+          <div class="metric">
+            <span class="label">Circuit Breaker</span>
+            <span class="value good" id="circuitState">closed</span>
+          </div>
         </div>
       </div>
       
       <button class="btn" onclick="refresh()">🔄 Refresh Status</button>
     </div>
     
-    <!-- AI Agent Tab -->
-    <div id="tab-agent" style="display: none;">
-      <h3 class="section-title">🤖 AI Agent Tasks</h3>
-      <p style="color: #888; margin-bottom: 24px;">Choose an agent task type. Each task runs distributed across the network.</p>
-      
-      <!-- Agent Task Selection -->
-      <div class="agent-task-grid" style="margin-bottom: 24px;">
-        <div class="agent-task-card" onclick="selectAgentTask('agent_train')">
-          <div class="icon">🎯</div>
-          <h4>Agent Training</h4>
-          <p>Fine-tune autonomous agents on custom data</p>
-        </div>
-        <div class="agent-task-card" onclick="selectAgentTask('agent_eval')">
-          <div class="icon">📊</div>
-          <h4>Agent Evaluation</h4>
-          <p>Benchmark agent performance</p>
-        </div>
-        <div class="agent-task-card" onclick="selectAgentTask('agent_optimize')">
-          <div class="icon">⚡</div>
-          <h4>Agent Optimization</h4>
-          <p>AutoML-style self-improvement</p>
-        </div>
-        <div class="agent-task-card" onclick="selectAgentTask('agent_infer')">
-          <div class="icon">🚀</div>
-          <h4>Agent Inference</h4>
-          <p>Run agent on custom tasks</p>
-        </div>
-        <div class="agent-task-card" onclick="selectAgentTask('rlhf')">
-          <div class="icon">💬</div>
-          <h4>RLHF Training</h4>
-          <p>Reinforcement Learning from Human Feedback</p>
-        </div>
-        <div class="agent-task-card" onclick="selectAgentTask('batch_infer')">
-          <div class="icon">📦</div>
-          <h4>Batch Inference</h4>
-          <p>Process 1000+ samples in parallel</p>
-        </div>
-      </div>
-      
-      <!-- Agent Task Form -->
-      <div class="card" style="max-width: 700px;" id="agentForm" style="display: none;">
-        <h3 id="agentFormTitle">Agent Task</h3>
-        <div style="display: grid; gap: 16px; margin-top: 16px;">
-          <div>
-            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Model</label>
-            <select id="agentModel">
-              <option value="llama3">LLaMA 3 (8B)</option>
-              <option value="mistral">Mistral 7B</option>
-              <option value="mixtral">Mixtral 8x7B</option>
-              <option value="phi">Phi-3</option>
-            </select>
-          </div>
-          
-          <div id="taskInputGroup">
-            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Task Description</label>
-            <textarea id="agentTask" placeholder="Describe the task or paste agent config..." style="min-height: 100px;"></textarea>
-          </div>
-          
-          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;" id="iterationsGroup">
-            <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Iterations</label>
-              <input type="number" id="agentIterations" value="10" min="1">
-            </div>
-            <div id="batchGroup">
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Batch Size</label>
-              <input type="number" id="agentBatchSize" value="100" min="1">
-            </div>
-            <div>
-              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Max Credits</label>
-              <input type="number" id="agentCredits" value="50" min="1">
-            </div>
-          </div>
-          
-          <button class="btn" onclick="runAgentTask()">🚀 Submit to Network</button>
-          
-          <div class="output" id="agentResult">Agent task results will appear here...</div>
-        </div>
-      </div>
-      
-      <!-- Agent Metrics -->
-      <div class="card" style="margin-top: 24px;">
-        <h3>📈 Agent Performance</h3>
-        <div id="agentMetrics">
-          <div class="metric">
-            <span class="label">Avg Score</span>
-            <span class="value" id="avgScore">-</span>
-          </div>
-          <div class="metric">
-            <span class="label">Avg Latency</span>
-            <span class="value" id="avgLatency">-</span>
-          </div>
-          <div class="metric">
-            <span class="label">Tasks Completed</span>
-            <span class="value good" id="agentTasksCompleted">0</span>
-          </div>
-        </div>
-        <button class="btn secondary" style="margin-top: 16px;" onclick="loadAgentMetrics()">🔄 Refresh Metrics</button>
-      </div>
-    </div>
-    
     <!-- Compute Tab -->
     <div id="tab-compute" style="display: none;">
       <h3 class="section-title">⚡ Run Compute Task</h3>
-      <div class="card" style="max-width: 600px;">
-        <div style="display: grid; gap: 16px;">
-          <div>
-            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Task Type</label>
-            <select id="computeTask">
-              <option value="fib">Fibonacci</option>
-              <option value="sumFib">Sum of Fibonacci</option>
-              <option value="matrix">Matrix Operations</option>
-            </select>
+      
+      <!-- Task Selection -->
+      <div class="grid" style="margin-bottom: 24px;">
+        <div class="task-card" onclick="selectTask('fib')">
+          <div class="icon">🔢</div>
+          <h4>Fibonacci</h4>
+          <p>Calculate Fibonacci numbers</p>
+        </div>
+        <div class="task-card" onclick="selectTask('sumFib')">
+          <div class="icon">📊</div>
+          <h4>Sum Fibonacci</h4>
+          <p>Sum of Fibonacci sequence</p>
+        </div>
+        <div class="task-card" onclick="selectTask('matrix')">
+          <div class="icon">🔲</div>
+          <h4>Matrix Operations</h4>
+          <p>Matrix multiplication & operations</p>
+        </div>
+        <div class="task-card" onclick="selectTask('custom')">
+          <div class="icon">⚙️</div>
+          <h4>Custom WASM</h4>
+          <p>Upload and run WASM module</p>
+        </div>
+      </div>
+      
+      <!-- Task Form -->
+      <div class="card" style="max-width: 700px;" id="taskForm">
+        <h3 id="taskFormTitle">Select a Task Type</h3>
+        <div style="display: grid; gap: 16px; margin-top: 16px;">
+          <div id="taskInputSection" style="display: none;">
+            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Input Parameter</label>
+            <input type="number" id="taskInput" placeholder="Enter value..." value="30" min="1">
           </div>
-          <div>
-            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Argument (n)</label>
-            <input type="number" id="computeArg" value="30" min="1">
+          
+          <div id="wasmInputSection" style="display: none;">
+            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">WASM Path (optional)</label>
+            <input type="text" id="wasmPath" placeholder="/path/to/module.wasm">
+            <label style="color: #888; font-size: 12px; display: block; margin: 12px 0 6px;">Input Data (JSON)</label>
+            <textarea id="wasmInput" placeholder='{"arg": 30}' style="min-height: 80px;"></textarea>
           </div>
-          <button class="btn" onclick="runComputeTask()">🚀 Run Task</button>
-          <div class="output" id="computeResult">Results will appear here...</div>
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Timeout (seconds)</label>
+              <input type="number" id="taskTimeout" value="30" min="1">
+            </div>
+            <div>
+              <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Credits</label>
+              <input type="number" id="taskCredits" value="10" min="1">
+            </div>
+          </div>
+          
+          <div id="peerSection" style="display: none;">
+            <label style="color: #888; font-size: 12px; display: block; margin-bottom: 6px;">Send to Peer (optional)</label>
+            <input type="text" id="peerAddress" placeholder="peer_ip:port (leave empty for local execution)">
+          </div>
+          
+          <button class="btn" onclick="submitTask()">🚀 Submit Task</button>
+          
+          <div class="output" id="taskResult">Task results will appear here...</div>
         </div>
       </div>
     </div>
     
     <!-- Network Tab -->
-    <div id="tab-nodes" style="display: none;">
+    <div id="tab-network" style="display: none;">
       <div class="card" style="margin-bottom: 24px;">
-        <h3>📡 Connect to Network</h3>
+        <h3>📡 Network Status</h3>
         <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px;">
-          <input type="text" id="registryUrl" placeholder="Discovery server URL" value="https://openpool.live/api" style="flex: 1; min-width: 250px;">
-          <button class="btn" onclick="connectToRegistry()">🔗 Connect</button>
-          <button class="btn secondary" onclick="refreshNodes()">🔄 Refresh</button>
+          <input type="text" id="peerConnect" placeholder="peer_ip:port" style="flex: 1; min-width: 200px;">
+          <button class="btn" onclick="connectToPeer()">🔗 Connect</button>
+          <button class="btn secondary" onclick="refreshPeers()">🔄 Refresh</button>
         </div>
       </div>
       
-      <h3 class="section-title">🌐 Available Nodes (<span id="availableNodes">0</span>)</h3>
-      <div class="grid" id="nodeGrid" style="margin-bottom: 24px;">
+      <h3 class="section-title">🌐 Connected Peers (<span id="peerListCount">0</span>)</h3>
+      <div class="grid" id="peerGrid">
         <div class="card" style="text-align: center; color: #666;">
-          <p>Click "Refresh" to discover nodes</p>
+          <p>No connected peers</p>
         </div>
       </div>
     </div>
@@ -302,16 +280,33 @@
     <!-- Earn Tab -->
     <div id="tab-earn" style="display: none;">
       <h3 class="section-title">💰 Earn by Sharing Compute</h3>
-      <div class="card" style="max-width: 600px;">
-        <h4 style="color: #00d4ff; margin-bottom: 12px;">🚀 Start Earning</h4>
-        <div style="background: #0a0a12; padding: 12px; border-radius: 8px; font-family: monospace; margin-bottom: 8px;">
-          <div style="color: #666; font-size: 12px; margin-bottom: 4px;"># Download and run</div>
-          <div style="color: #00d4ff;">./openpool --http 8080 --registry https://openpool.live/api</div>
+      <div class="card" style="max-width: 700px;">
+        <h4 style="color: #00d4ff; margin-bottom: 12px;">🚀 Start Contributing</h4>
+        <p style="color: #888; margin-bottom: 16px;">Run the OpenPool node on your machine and earn credits by processing tasks from other users.</p>
+        
+        <div style="background: #0a0a12; padding: 12px; border-radius: 8px; font-family: monospace; margin-bottom: 12px;">
+          <div style="color: #666; font-size: 12px; margin-bottom: 4px;"># Download and run the integrated node</div>
+          <div style="color: #00d4ff;">git clone https://github.com/DP229/openpool.git</div>
+          <div style="color: #00d4ff;">cd openpool && go build -o openpool ./cmd/integrated/</div>
         </div>
+        
+        <div style="background: #0a0a12; padding: 12px; border-radius: 8px; font-family: monospace; margin-bottom: 12px;">
+          <div style="color: #666; font-size: 12px; margin-bottom: 4px;"># Start the node</div>
+          <div style="color: #00d4ff;">./openpool -port 9000 -http 8080 -workers 8</div>
+        </div>
+        
         <div style="background: #0a0a12; padding: 12px; border-radius: 8px; font-family: monospace;">
-          <div style="color: #666; font-size: 12px; margin-bottom: 4px;"># With GPU enabled</div>
-          <div style="color: #00d4ff;">./openpool --http 8080 --gpu --registry https://openpool.live/api</div>
+          <div style="color: #666; font-size: 12px; margin-bottom: 4px;"># With GPU support (coming soon)</div>
+          <div style="color: #00d4ff;">./openpool -port 9000 -http 8080 -gpu</div>
         </div>
+        
+        <h4 style="color: #fff; margin: 24px 0 12px;">💡 Tips for Maximum Earnings</h4>
+        <ul style="color: #888; line-height: 1.8; margin-left: 20px;">
+          <li>Keep the node running for maximum uptime credits</li>
+          <li>Use more workers (-workers flag) for concurrent task processing</li>
+          <li>Ensure stable internet connection for peer connectivity</li>
+          <li>GPU-equipped nodes earn higher credit rates</li>
+        </ul>
       </div>
     </div>
   </div>
@@ -319,7 +314,7 @@
   <script>
     const API = window.location.origin;
     let currentTab = 'dashboard';
-    let nodes = [];
+    let selectedTask = '';
     
     async function apiCall(endpoint, opts = {}) {
       try {
@@ -327,7 +322,15 @@
           headers: { 'Content-Type': 'application/json' },
           ...opts
         });
-        return await res.json();
+        const text = await res.text();
+        if (!text) {
+          return { error: 'Empty response' };
+        }
+        try {
+          return JSON.parse(text);
+        } catch (e) {
+          return { error: 'Invalid JSON: ' + text.substring(0, 100) };
+        }
       } catch (e) {
         return { error: e.message };
       }
@@ -336,92 +339,111 @@
     async function refresh() {
       const status = await apiCall('/status');
       if (status.error) {
-        document.getElementById('status').textContent = 'Offline';
+        document.getElementById('status').textContent = 'Error';
         document.getElementById('status').style.color = '#ff4444';
+        console.error('Status error:', status.error);
         return;
       }
       
       document.getElementById('nodeId').textContent = (status.node_id || 'Unknown').substring(0, 20) + '...';
       document.getElementById('credits').textContent = status.credits ?? 0;
-      document.getElementById('peerCount').textContent = status.connected_peers ?? 0;
+      document.getElementById('peerCount').textContent = status.peers ?? 0;
       document.getElementById('status').textContent = 'Online';
       document.getElementById('status').style.color = '#00ff88';
+      document.getElementById('cpuCores').textContent = status.cpu_cores ?? '-';
+      document.getElementById('ramFree').textContent = status.ram_free_mb ?? '-';
+      document.getElementById('nodeCount').textContent = status.peers ?? 0;
       
-      // Load agent metrics
-      loadAgentMetrics();
+      // Load health metrics
+      loadHealthMetrics();
     }
     
-    async function loadAgentMetrics() {
-      const res = await apiCall('/metrics');
-      if (!res.error && res.task_metrics) {
-        let totalScore = 0, totalLatency = 0, totalTasks = 0;
-        res.task_metrics.forEach(t => {
-          if (t.type && t.type.startsWith('agent')) {
-            totalScore += t.avg_score || 0;
-            totalLatency += t.avg_latency_ms || 0;
-            totalTasks += t.count || 0;
-          }
-        });
-        document.getElementById('avgScore').textContent = totalTasks > 0 ? (totalScore / totalTasks).toFixed(2) : '-';
-        document.getElementById('avgLatency').textContent = totalTasks > 0 ? Math.round(totalLatency / totalTasks) + 'ms' : '-';
-        document.getElementById('agentTasksCompleted').textContent = totalTasks;
-      }
-    }
-    
-    let selectedAgentTask = '';
-    
-    function selectAgentTask(task) {
-      selectedAgentTask = task;
-      const form = document.getElementById('agentForm');
-      const title = document.getElementById('agentFormTitle');
-      
-      form.style.display = 'block';
-      
-      const taskInfo = {
-        'agent_train': { title: '🎯 Agent Training', iterations: true, batch: false },
-        'agent_eval': { title: '📊 Agent Evaluation', iterations: true, batch: true },
-        'agent_optimize': { title: '⚡ Agent Optimization', iterations: true, batch: false },
-        'agent_infer': { title: '🚀 Agent Inference', iterations: false, batch: false },
-        'rlhf': { title: '💬 RLHF Training', iterations: true, batch: false },
-        'batch_infer': { title: '📦 Batch Inference', iterations: false, batch: true }
-      };
-      
-      title.textContent = taskInfo[task].title;
-      document.getElementById('iterationsGroup').style.display = taskInfo[task].iterations ? 'grid' : 'none';
-      document.getElementById('batchGroup').style.display = taskInfo[task].batch ? 'block' : 'none';
-      
-      // Scroll to form
-      form.scrollIntoView({ behavior: 'smooth' });
-    }
-    
-    async function runAgentTask() {
-      if (!selectedAgentTask) {
-        alert('Select a task type first');
+    async function loadHealthMetrics() {
+      const health = await apiCall('/health');
+      if (health.error) {
+        console.error('Health error:', health.error);
         return;
       }
       
-      const model = document.getElementById('agentModel').value;
-      const task = document.getElementById('agentTask').value;
-      const iterations = parseInt(document.getElementById('agentIterations').value) || 10;
-      const batchSize = parseInt(document.getElementById('agentBatchSize').value) || 100;
-      const credits = parseInt(document.getElementById('agentCredits').value) || 50;
+      if (health.executor) {
+        document.getElementById('tasksCompleted').textContent = health.executor.tasks_completed ?? 0;
+        document.getElementById('tasksFailed').textContent = health.executor.tasks_failed ?? 0;
+        document.getElementById('avgLatency').textContent = (health.executor.avg_latency_ms ?? '-') + 'ms';
+        document.getElementById('workerStatus').textContent = health.executor.shutting_down ? 'Shutting Down' : 'Running';
+        document.getElementById('workerStatus').style.color = health.executor.shutting_down ? '#ff8800' : '#00ff88';
+      }
       
-      const resultEl = document.getElementById('agentResult');
-      resultEl.textContent = '🤖 Submitting agent task to network...\n';
-      resultEl.textContent += `Task: ${selectedAgentTask}\nModel: ${model}`;
+      if (health.circuit_breaker) {
+        document.getElementById('circuitState').textContent = health.circuit_breaker.state ?? 'unknown';
+        document.getElementById('circuitState').style.color = 
+          health.circuit_breaker.state === 'closed' ? '#00ff88' : 
+          health.circuit_breaker.state === 'open' ? '#ff4444' : '#ff8800';
+      }
+      
+      const tasks = health.executor?.tasks_completed ?? 0;
+      document.getElementById('taskCount').textContent = tasks;
+    }
+    
+    function selectTask(task) {
+      selectedTask = task;
+      document.getElementById('taskInputSection').style.display = task === 'custom' ? 'none' : 'block';
+      document.getElementById('wasmInputSection').style.display = task === 'custom' ? 'block' : 'none';
+      document.getElementById('peerSection').style.display = 'block';
+      
+      const titles = {
+        'fib': '🔢 Fibonacci',
+        'sumFib': '📊 Sum Fibonacci',
+        'matrix': '🔲 Matrix Operations',
+        'custom': '⚙️ Custom WASM'
+      };
+      document.getElementById('taskFormTitle').textContent = titles[task] || 'Compute Task';
+      
+      if (task === 'custom') {
+        document.getElementById('taskInput').value = '';
+      }
+    }
+    
+    async function submitTask() {
+      if (!selectedTask) {
+        alert('Please select a task type first');
+        return;
+      }
+      
+      const timeout = parseInt(document.getElementById('taskTimeout').value) || 30;
+      const credits = parseInt(document.getElementById('taskCredits').value) || 10;
+      const peerAddr = document.getElementById('peerAddress').value.trim();
+      
+      const resultEl = document.getElementById('taskResult');
+      resultEl.textContent = '🚀 Submitting task...\n';
+      
+      let taskData = {};
+      
+      if (selectedTask === 'custom') {
+        const wasmPath = document.getElementById('wasmPath').value.trim();
+        const wasmInput = document.getElementById('wasmInput').value.trim();
+        taskData = {
+          wasm_path: wasmPath,
+          input: wasmInput ? JSON.parse(wasmInput) : {},
+          timeout_sec: timeout,
+          credits: credits
+        };
+      } else {
+        const arg = parseInt(document.getElementById('taskInput').value) || 30;
+        taskData = {
+          op: selectedTask,
+          arg: arg,
+          timeout_sec: timeout,
+          credits: credits
+        };
+      }
+      
+      const endpoint = peerAddr ? '/submit?peer=' + encodeURIComponent(peerAddr) : '/submit';
       
       try {
-        const res = await fetch(API + '/agent', {
+        const res = await fetch(API + endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: selectedAgentTask,
-            model: model,
-            task: task,
-            iterations: iterations,
-            batch_size: batchSize,
-            max_credits: credits
-          })
+          body: JSON.stringify(taskData)
         });
         
         const data = await res.json();
@@ -433,97 +455,63 @@
         
         resultEl.textContent = JSON.stringify(data, null, 2);
         
-        if (data.score) {
+        if (data.state === 'done' || data.result) {
           resultEl.textContent += '\n\n✅ Task completed!';
           document.getElementById('taskCount').textContent = parseInt(document.getElementById('taskCount').textContent) + 1;
-          loadAgentMetrics();
+          loadHealthMetrics();
         }
       } catch (e) {
         resultEl.textContent = '❌ Error: ' + e.message;
       }
     }
     
-    async function runComputeTask() {
-      const taskType = document.getElementById('computeTask').value;
-      const arg = parseInt(document.getElementById('computeArg').value) || 30;
-      
-      const resultEl = document.getElementById('computeResult');
-      resultEl.textContent = 'Running...';
-      
-      const res = await apiCall('/run', {
-        method: 'POST',
-        body: JSON.stringify({ op: taskType, arg: arg })
-      });
-      
-      resultEl.textContent = JSON.stringify(res, null, 2);
-      
-      if (res.status === 'ok') {
-        document.getElementById('taskCount').textContent = parseInt(document.getElementById('taskCount').textContent) + 1;
+    async function connectToPeer() {
+      const peerAddr = document.getElementById('peerConnect').value.trim();
+      if (!peerAddr) {
+        alert('Enter a peer address');
+        return;
       }
-    }
-    
-    async function refreshNodes() {
-      const registryUrl = document.getElementById('registryUrl').value.trim();
-      const grid = document.getElementById('nodeGrid');
-      
-      grid.innerHTML = '<div class="card" style="text-align: center; color: #666;">🔍 Searching...</div>';
-      
-      try {
-        const res = await fetch(registryUrl + '/peers');
-        const data = await res.json();
-        nodes = data.peers || [];
-        
-        document.getElementById('availableNodes').textContent = nodes.length;
-        document.getElementById('nodeCount').textContent = nodes.length;
-        
-        if (nodes.length === 0) {
-          grid.innerHTML = '<div class="card" style="text-align: center; color: #666;">No nodes available</div>';
-          return;
-        }
-        
-        grid.innerHTML = nodes.map((n, i) => `
-          <div class="card">
-            <h4>${n.id ? n.id.substring(0, 16) + '...' : 'Node ' + (i+1)}</h4>
-            <div style="display: grid; gap: 8px; margin-top: 12px; font-size: 13px;">
-              <div style="display: flex; justify-content: space-between;">
-                <span style="color: #888;">CPU Cores</span>
-                <span>${n.cpu_cores || '?'}</span>
-              </div>
-              <div style="display: flex; justify-content: space-between;">
-                <span style="color: #888;">GPU</span>
-                <span style="color: ${n.has_gpu ? '#00ff88' : '#888'};">${n.has_gpu ? '✅ Yes' : '❌ No'}</span>
-              </div>
-              <div style="display: flex; justify-content: space-between;">
-                <span style="color: #888;">Price</span>
-                <span style="color: #00d4ff;">${n.price || 10} credits</span>
-              </div>
-            </div>
-            <button class="btn small" style="width: 100%; margin-top: 12px;" onclick="connectToNode('${n.multiaddr || ''}')">🔗 Connect</button>
-          </div>
-        `).join('');
-      } catch (e) {
-        grid.innerHTML = '<div class="card" style="text-align: center; color: #ff6666;">⚠️ Error: ' + e.message + '</div>';
-      }
-    }
-    
-    async function connectToNode(multiaddr) {
-      if (!multiaddr) return;
       
       const res = await apiCall('/connect', {
         method: 'POST',
-        body: JSON.stringify({ address: multiaddr })
+        body: JSON.stringify({ address: peerAddr })
       });
       
       if (!res.error) {
-        alert('Connected!');
+        alert('Connected to peer!');
+        refreshPeers();
         refresh();
       } else {
         alert('Failed: ' + res.error);
       }
     }
     
-    function connectToRegistry() {
-      refreshNodes();
+    async function refreshPeers() {
+      const status = await apiCall('/status');
+      const grid = document.getElementById('peerGrid');
+      
+      const peerIds = status.peer_ids || [];
+      document.getElementById('peerListCount').textContent = peerIds.length;
+      
+      if (peerIds.length === 0) {
+        grid.innerHTML = '<div class="card" style="text-align: center; color: #666;"><p>No connected peers</p></div>';
+        return;
+      }
+      
+      grid.innerHTML = peerIds.map((id, i) => `
+        <div class="card">
+          <h4>Node ${(i+1)}</h4>
+          <div style="color: #00d4ff; font-family: monospace; font-size: 12px; margin-bottom: 8px;">
+            ${id.substring(0, 16)}...
+          </div>
+          <div style="display: grid; gap: 8px; font-size: 13px;">
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: #888;">Peer ID</span>
+              <span>${id.substring(0, 8)}</span>
+            </div>
+          </div>
+        </div>
+      `).join('');
     }
     
     function showTab(tab) {
@@ -533,11 +521,10 @@
       
       document.getElementById('tab-' + tab).style.display = 'block';
       const tabs = document.querySelectorAll('.tab');
-      const tabIndex = { dashboard: 0, agent: 1, compute: 2, nodes: 3, earn: 4 };
+      const tabIndex = { dashboard: 0, compute: 1, network: 2, earn: 3 };
       tabs[tabIndex[tab]].classList.add('active');
       
-      if (tab === 'nodes') refreshNodes();
-      if (tab === 'agent') loadAgentMetrics();
+      if (tab === 'network') refreshPeers();
     }
     
     // Initialize

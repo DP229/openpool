@@ -1,16 +1,16 @@
 # OpenPool
 
-> **Democratizing compute — one node at a time.**
+> **Secure P2P Compute Marketplace — democratizing compute, one node at a time.**
 
 A global peer-to-peer network that distributes computational workloads across volunteered hardware, enabling anyone to contribute or consume processing power without relying on centralized cloud providers.
 
 ## The Problem
 
-High-computation tasks — CFD, rendering, AI inference, scientific simulations — require expensive centralized cloud infrastructure. This concentrates power in the hands of a few providers and creates barriers for researchers, students, and developers in under-resourced regions.
+High-computation tasks — CFD, rendering, scientific simulations, batch processing — require expensive centralized cloud infrastructure. This concentrates power in the hands of a few providers and creates barriers for researchers, students, and developers in under-resourced regions.
 
 ## The Vision
 
-A world where idle CPU/GPU cycles are shared freely. A researcher in rural India can run a CFD simulation on a cluster of gaming PCs in Berlin. A student in Nigeria can access distributed AI inference without an AWS bill. A retired workstation in Tokyo contributes to a medical imaging pipeline overnight.
+A world where idle CPU/GPU cycles are shared freely. A researcher in rural India can run a CFD simulation on a cluster of gaming PCs in Berlin. A student in Nigeria can access distributed compute without an AWS bill. A retired workstation in Tokyo contributes to a medical imaging pipeline overnight.
 
 ## Core Principles
 
@@ -39,7 +39,7 @@ A world where idle CPU/GPU cycles are shared freely. A researcher in rural India
 │                                                                   │
 │  ┌─────────┐   ┌─────────┐   ┌─────────┐                         │
 │  │ Task 1  │   │ Task 2  │   │ Task 3  │   ← Work Requester    │
-│  │ (CFD)   │   │ (Render)│   │ (AI)    │                      │
+│  │ (CFD)   │   │ (Render)│   │ (WASM)  │                      │
 │  └─────────┘   └─────────┘   └─────────┘                         │
 └─────────────────────────────────────────────────────────────────┘
 ```

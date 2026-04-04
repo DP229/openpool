@@ -10,37 +10,36 @@ import (
 
 // Trajectory represents a task execution trajectory (like ATIF format)
 type Trajectory struct {
-	ID           string      `json:"id"`
-	TaskType     string      `json:"task_type"`
-	TaskInput    string      `json:"task_input"`
-	AgentConfig  string      `json:"agent_config,omitempty"`
-	Steps        []TrajStep `json:"steps"`
-	FinalScore   float64     `json:"score"`
-	LatencyMs   int         `json:"latency_ms"`
-	CostCredits int         `json:"cost_credits"`
-	NodeID      string      `json:"node_id"`
-	Success     bool        `json:"success"`
-	CreatedAt   time.Time   `json:"created_at"`
+	ID          string     `json:"id"`
+	TaskType    string     `json:"task_type"`
+	TaskInput   string     `json:"task_input"`
+	Steps       []TrajStep `json:"steps"`
+	FinalScore  float64    `json:"score"`
+	LatencyMs   int        `json:"latency_ms"`
+	CostCredits int        `json:"cost_credits"`
+	NodeID      string     `json:"node_id"`
+	Success     bool       `json:"success"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // TrajStep represents a single step in a trajectory
 type TrajStep struct {
 	ID        int       `json:"step_id"`
 	Timestamp time.Time `json:"timestamp"`
-	Action   string    `json:"action"`
-	Input    string    `json:"input,omitempty"`
-	Output   string    `json:"output,omitempty"`
+	Action    string    `json:"action"`
+	Input     string    `json:"input,omitempty"`
+	Output    string    `json:"output,omitempty"`
 	Duration  int       `json:"duration_ms,omitempty"`
-	Error    string    `json:"error,omitempty"`
+	Error     string    `json:"error,omitempty"`
 }
 
 // TaskHistory stores task execution history
 type TaskHistory struct {
-	mu          sync.RWMutex
+	mu           sync.RWMutex
 	trajectories []Trajectory
-	maxSize     int
-	byTaskType  map[string][]*Trajectory
-	byNode      map[string][]*Trajectory
+	maxSize      int
+	byTaskType   map[string][]*Trajectory
+	byNode       map[string][]*Trajectory
 }
 
 // NewTaskHistory creates a new task history
@@ -51,8 +50,8 @@ func NewTaskHistory(maxSize int) *TaskHistory {
 	return &TaskHistory{
 		trajectories: make([]Trajectory, 0, maxSize),
 		maxSize:      maxSize,
-		byTaskType:  make(map[string][]*Trajectory),
-		byNode:      make(map[string][]*Trajectory),
+		byTaskType:   make(map[string][]*Trajectory),
+		byNode:       make(map[string][]*Trajectory),
 	}
 }
 
@@ -191,9 +190,9 @@ func (h *TaskHistory) GetStats() map[string]interface{} {
 			}
 		}
 		typeStats[taskType] = map[string]interface{}{
-			"count":         len(trajs),
-			"avg_score":     totalScore / float64(len(trajs)),
-			"avg_latency":   totalLatency / len(trajs),
+			"count":        len(trajs),
+			"avg_score":    totalScore / float64(len(trajs)),
+			"avg_latency":  totalLatency / len(trajs),
 			"success_rate": float64(successCount) / float64(len(trajs)),
 		}
 	}

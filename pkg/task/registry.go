@@ -11,13 +11,13 @@ import (
 type TaskHandler interface {
 	// Execute runs the task and returns the result
 	Execute(ctx context.Context, input []byte) (*Result, error)
-	
+
 	// Name returns the task type name (e.g., "fib", "matrix_mul")
 	Name() string
-	
+
 	// Validate checks if the input is valid for this handler
 	Validate(input []byte) error
-	
+
 	// EstimateCost estimates the cost in credits for this task
 	EstimateCost(input []byte) int
 }
@@ -63,15 +63,15 @@ func (r *Registry) Execute(ctx context.Context, taskType string, taskID, nodeID 
 	if !ok {
 		return nil, fmt.Errorf("unknown task type: %s", taskType)
 	}
-	
+
 	if err := handler.Validate(input); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
-	
+
 	start := time.Now()
 	result, err := handler.Execute(ctx, input)
 	latency := time.Since(start)
-	
+
 	if err != nil {
 		result = &Result{
 			ID:        taskID,
@@ -87,7 +87,7 @@ func (r *Registry) Execute(ctx context.Context, taskType string, taskID, nodeID 
 	} else {
 		result.Metrics.LatencyMs = int(latency.Milliseconds())
 	}
-	
+
 	// Ensure result has required fields
 	if result.ID == "" {
 		result.ID = taskID
@@ -98,7 +98,7 @@ func (r *Registry) Execute(ctx context.Context, taskType string, taskID, nodeID 
 	if result.Metrics.CostCredits == 0 {
 		result.Metrics.CostCredits = handler.EstimateCost(input)
 	}
-	
+
 	return result, nil
 }
 
@@ -117,9 +117,9 @@ type BaseHandler struct {
 	CostCredits int
 }
 
-func (h *BaseHandler) Name() string                    { return h.Name_ }
-func (h *BaseHandler) EstimateCost(input []byte) int   { return h.CostCredits }
-func (h *BaseHandler) Validate(input []byte) error     { return nil }
+func (h *BaseHandler) Name() string                  { return h.Name_ }
+func (h *BaseHandler) EstimateCost(input []byte) int { return h.CostCredits }
+func (h *BaseHandler) Validate(input []byte) error   { return nil }
 func (h *BaseHandler) Execute(ctx context.Context, input []byte) (*Result, error) {
 	return nil, fmt.Errorf("not implemented")
 }
@@ -128,7 +128,6 @@ func (h *BaseHandler) Execute(ctx context.Context, input []byte) (*Result, error
 const (
 	DefaultCostCPU   = 5
 	DefaultCostGPU   = 20
-	DefaultCostAgent = 50
 	DefaultCostBatch = 100
 )
 

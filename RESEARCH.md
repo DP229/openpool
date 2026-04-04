@@ -11,9 +11,9 @@
 The problem is **acute and worsening**:
 
 - **GPU prices**: NVIDIA H100 costs **$25,000–$40,000** per unit. Even A100s run $10K-15K.
-- **Cloud rental costs**: A single H100 instance on AWS costs **$30-40/hour**. A medium AI training run can cost tens of thousands of dollars.
+- **Cloud rental costs**: A single H100 instance on AWS costs **$30-40/hour**. Large compute workloads can cost tens of thousands of dollars.
 - **Cloud concentration**: AWS, GCP, Azure control **65%+ of cloud market**. Three companies decide who gets compute and at what price.
-- **AI demand explosion**: Compute demand growing **30%+ per year**. Supply can't keep up. Bain predicts AI chip shortages through 2027.
+- **Compute demand explosion**: Compute demand growing **30%+ per year**. Supply can't keep up. Chip shortages predicted through 2027.
 - **Geographic inequality**: A researcher in Nigeria or rural India faces the same cloud prices as someone in Silicon Valley — but with a fraction of the purchasing power. Latency to cloud regions is also prohibitive.
 - **Idle hardware everywhere**: Over **1 billion gaming PCs** sit idle most of the day. Enterprise servers run at 15-20% utilization. This represents an enormous untapped compute reservoir.
 
@@ -29,7 +29,7 @@ The problem is **acute and worsening**:
 | Students | No free/cheap GPU access for ML training |
 | Developers in developing regions | Latency + cost makes cloud impractical |
 | Open source projects | No institutional compute grants |
-| Small companies | AI inference costs kill margins |
+| Small companies | Compute costs kill margins |
 | Scientists in academia | Grant money goes to compute, not people |
 
 This isn't theoretical. This is a **structural inequality** in the infrastructure layer of the modern economy.
@@ -87,7 +87,7 @@ Options:
 
 Large computations need to be split into chunks:
 - **Embarrassingly parallel** (CFD mesh, Monte Carlo, rendering tiles) → trivial split
-- **Stateful / sequential** (LLM training, iterative solvers) → needs pipeline or Reduce stage
+- **Stateful / sequential** (iterative solvers) → needs pipeline or Reduce stage
 - **Communication-heavy** (distributed ML) → needs data partitioning strategy
 
 **Recommendation**: Support both MapReduce-style division and streaming/chunked processing. Build a task specification language.
@@ -128,8 +128,7 @@ Do's:
 |---|---|---|---|
 | CFD simulation | Navier-Stokes, FEA | Yes (mesh decomposition) | Deterministic |
 | Rendering | Blender, ray tracing | Yes (tile-based) | Deterministic |
-| AI inference | LLM, image generation | Yes (batch requests) | Approximate / sampling |
-| AI training | Fine-tuning, RL | Partial (data parallelism) | Hard — needs ZK |
+| Batch processing | Data pipelines, ETL | Yes (partition-based) | Deterministic |
 | Scientific computing | Molecular dynamics | Yes | Deterministic |
 | Video processing | Transcoding, encoding | Yes (frame-level) | Deterministic |
 | WebAssembly compute | WASM workloads | Yes | Deterministic |
@@ -146,7 +145,7 @@ What makes OpenPool different from Render, Golem, Akash:
 |---|---|---|---|---|
 | **Open source** | Partial | Partial | Partial | **Fully open** |
 | **Token required** | Yes (RPL) | Yes (GLM) | Yes (AKT) | **No — credit-based** |
-| **General purpose** | No (GPU rendering) | Partial | Yes (containers) | **Yes (CFD+AI+render+WASM)** |
+| **General purpose** | No (GPU rendering) | Partial | Yes (containers) | **Yes (CFD+render+WASM)** |
 | **Non-crypto users** | Hard | Hard | Hard | **Easy — email signup** |
 | **Verification** | Oracle-based | Blockchain | Blockchain | **Redundant + deterministic** |
 | **Target users** | VFX artists | Developers | Cloud users | **Researchers + devs + students** |
@@ -245,7 +244,7 @@ What makes OpenPool different from Render, Golem, Akash:
 - [ ] Payment integration (Lightning Network optional) — for non-reciprocal access
 - [ ] Task templates — pre-built images for CFD (OpenFOAM), ML (PyTorch), rendering (Blender CLI)
 - [ ] Task marketplace — searchable catalog of supported workloads
-- [ ] Mobile agent — run a node from a smartphone
+- [ ] Mobile node — run a node from a smartphone
 - [ ] Monitoring & alerting — Grafana dashboards, uptime tracking
 - [ ] Security audit
 - [ ] Open source release, community building
@@ -287,9 +286,9 @@ What makes OpenPool different from Render, Golem, Akash:
 1. **libp2p is mature** — Ethereum, Filecoin, Polkadot all use it. NAT traversal is solved.
 2. **WASM is ready** — WASI standard, browser + server, near-native speed.
 3. **GPU surplus post-crypto-crash** — Mining GPUs flooding the market, mostly idle.
-4. **AI compute costs are unsustainable** — Even big companies are looking for alternatives.
+4. **Compute costs are unsustainable** — Even big companies are looking for alternatives.
 5. **DePIN sector growing** — Render, Filecoin, Helium proved there's demand for decentralized physical infrastructure.
-6. **Open source AI** — Llama, Stable Diffusion, OpenFOAM — the software is there, the compute is the bottleneck.
+6. **Open source compute tools** — OpenFOAM, Blender, scientific libraries — the software is there, the compute is the bottleneck.
 7. **Anti-cloud-concentration sentiment** — High-profile outages (AWS 2023), vendor lock-in complaints, data sovereignty concerns.
 
 ---

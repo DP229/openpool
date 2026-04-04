@@ -62,17 +62,16 @@ OpenPool is designed for maximum reach — from a Raspberry Pi to a data center.
 | **CPU** | 8+ cores | For orchestration |
 | **RAM** | 16 GB | For GPU + workload |
 | **GPU** | 4 GB VRAM | GTX 1050 Ti minimum |
-| **Storage** | 50 GB free | For large models/datasets |
-| **Network** | 25 Mbps up/down | For model weights |
+| **Storage** | 50 GB free | For large workloads/data |
+| **Network** | 25 Mbps up/down | For data transfer |
 | **Uptime** | Always-on preferred | Maximum credit earning |
 | **Run as** | Docker + systemd service | Production-grade |
 
 **What they can run:**
 - All standard client tasks
-- AI inference (LLMs, Stable Diffusion)
 - GPU rendering
 - Large CFD meshes
-- Training jobs (fine-tuning, not pre-training)
+- Batch processing jobs
 
 ---
 

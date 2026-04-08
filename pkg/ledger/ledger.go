@@ -105,6 +105,102 @@ func (l *Ledger) GetAll() []LedgerEntry {
 	return entries
 }
 
+// DeductCredits subtracts credits from a node, clamping to zero.
+// Returns the new balance. If the node does not exist, it is created with zero credits first.
+func (l *Ledger) DeductCredits(nodeID string, amount int) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	tx, err := l.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+
+	var balance int
+	err = tx.QueryRow("SELECT credits FROM ledger WHERE node_id = ?", nodeID).Scan(&balance)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			balance = 0
+		} else {
+			tx.Rollback()
+			return 0, err
+		}
+	}
+
+	balance -= amount
+	if balance < 0 {
+		balance = 0
+	}
+
+	ts := time.Now().Unix()
+	_, err = tx.Exec(`INSERT INTO ledger (node_id, credits, tasks_failed, updated_at)
+		VALUES (?, ?, 1, ?) ON CONFLICT(node_id) DO UPDATE SET credits=?, tasks_failed=tasks_failed+1, updated_at=?`,
+		nodeID, balance, ts, balance, ts)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	_, err = tx.Exec("INSERT INTO history (node_id, amount, reason, ts) VALUES (?, ?, ?, ?)",
+		nodeID, -amount, "slash", ts)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	return balance, nil
+}
+
+// RewardCredits adds credits to a node and increments tasks_completed.
+// Returns the new balance.
+func (l *Ledger) RewardCredits(nodeID string, amount int) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	tx, err := l.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+
+	var balance int
+	err = tx.QueryRow("SELECT credits FROM ledger WHERE node_id = ?", nodeID).Scan(&balance)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			balance = 0
+		} else {
+			tx.Rollback()
+			return 0, err
+		}
+	}
+
+	balance += amount
+	ts := time.Now().Unix()
+	_, err = tx.Exec(`INSERT INTO ledger (node_id, credits, tasks_completed, updated_at)
+		VALUES (?, ?, 1, ?) ON CONFLICT(node_id) DO UPDATE SET credits=?, tasks_completed=tasks_completed+1, updated_at=?`,
+		nodeID, balance, ts, balance, ts)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	_, err = tx.Exec("INSERT INTO history (node_id, amount, reason, ts) VALUES (?, ?, ?, ?)",
+		nodeID, amount, "reward", ts)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	return balance, nil
+}
+
 // RecordTask records a task completion for a node.
 func (l *Ledger) RecordTask(nodeID string, success bool) {
 	l.mu.Lock()
@@ -120,9 +216,9 @@ func (l *Ledger) RecordTask(nodeID string, success bool) {
 }
 
 type LedgerEntry struct {
-	NodeID          string `json:"node_id"`
-	Credits         int    `json:"credits"`
-	TasksCompleted  int    `json:"tasks_completed"`
-	TasksFailed     int    `json:"tasks_failed"`
-	UpdatedAt       int64  `json:"updated_at"`
+	NodeID         string `json:"node_id"`
+	Credits        int    `json:"credits"`
+	TasksCompleted int    `json:"tasks_completed"`
+	TasksFailed    int    `json:"tasks_failed"`
+	UpdatedAt      int64  `json:"updated_at"`
 }

@@ -30,7 +30,7 @@ func TestNew(t *testing.T) {
 				defer os.Remove(path)
 			}
 
-			v, err := New(path, DefaultConfig())
+			v, err := New(path, DefaultConfig(), nil)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -43,7 +43,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestNewWithDefaults(t *testing.T) {
-	v, err := NewWithDefaults(":memory:")
+	v, err := NewWithDefaults(":memory:", nil)
 	if err != nil {
 		t.Fatalf("NewWithDefaults() error = %v", err)
 	}
@@ -130,7 +130,7 @@ func TestVerifyResult(t *testing.T) {
 }
 
 func TestRecordVerification(t *testing.T) {
-	v, _ := NewWithDefaults(":memory:")
+	v, _ := NewWithDefaults(":memory:", nil)
 	defer v.Close()
 
 	ctx := context.Background()
@@ -169,7 +169,7 @@ func TestRecordVerification(t *testing.T) {
 }
 
 func TestGetNodeScore(t *testing.T) {
-	v, _ := NewWithDefaults(":memory:")
+	v, _ := NewWithDefaults(":memory:", nil)
 	defer v.Close()
 	ctx := context.Background()
 
@@ -231,7 +231,7 @@ func TestGetNodeScore(t *testing.T) {
 func TestShouldVerify(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.RedundantCount = 2
-	v, _ := New(":memory:", cfg)
+	v, _ := New(":memory:", cfg, nil)
 	defer v.Close()
 
 	tests := []struct {
@@ -278,7 +278,7 @@ func TestVerificationMethodString(t *testing.T) {
 }
 
 func TestGetAllNodeStats(t *testing.T) {
-	v, _ := NewWithDefaults(":memory:")
+	v, _ := NewWithDefaults(":memory:", nil)
 	defer v.Close()
 	ctx := context.Background()
 
@@ -350,7 +350,7 @@ func TestFormatDurationMs(t *testing.T) {
 }
 
 func TestConcurrentRecord(t *testing.T) {
-	v, _ := NewWithDefaults(":memory:")
+	v, _ := NewWithDefaults(":memory:", nil)
 	defer v.Close()
 	ctx := context.Background()
 
@@ -388,7 +388,7 @@ func TestConcurrentRecord(t *testing.T) {
 }
 
 func TestVerifyAndDecide(t *testing.T) {
-	v, _ := New(":memory:", DefaultConfig())
+	v, _ := New(":memory:", DefaultConfig(), nil)
 
 	// Single result - should pass
 	passed, reason := v.VerifyAndDecide([]json.RawMessage{json.RawMessage(`{"a":1}`)})
@@ -428,7 +428,7 @@ func TestVerifyAndDecide(t *testing.T) {
 func TestVerifyAndDecideLowerThreshold(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.AcceptThreshold = 0.5
-	v, _ := New(":memory:", cfg)
+	v, _ := New(":memory:", cfg, nil)
 
 	// 2 out of 3 match (66% >= 50% threshold)
 	passed, reason := v.VerifyAndDecide([]json.RawMessage{
@@ -438,5 +438,109 @@ func TestVerifyAndDecideLowerThreshold(t *testing.T) {
 	})
 	if !passed {
 		t.Errorf("2/3 match should pass at 50%% threshold, reason: %s", reason)
+	}
+}
+
+type mockLedger struct {
+	deductCalls []deductCall
+	rewardCalls []rewardCall
+	balance     int
+}
+
+type deductCall struct {
+	nodeID string
+	amount int
+}
+
+type rewardCall struct {
+	nodeID string
+	amount int
+}
+
+func (m *mockLedger) DeductCredits(nodeID string, amount int) (int, error) {
+	m.deductCalls = append(m.deductCalls, deductCall{nodeID, amount})
+	m.balance -= amount
+	if m.balance < 0 {
+		m.balance = 0
+	}
+	return m.balance, nil
+}
+
+func (m *mockLedger) RewardCredits(nodeID string, amount int) (int, error) {
+	m.rewardCalls = append(m.rewardCalls, rewardCall{nodeID, amount})
+	m.balance += amount
+	return m.balance, nil
+}
+
+func TestSlashNodeWithLedger(t *testing.T) {
+	ml := &mockLedger{balance: 100}
+	v, _ := NewWithDefaults(":memory:", ml)
+	defer v.Close()
+
+	err := v.SlashNode("bad-node", 30, "submitted fake results")
+	if err != nil {
+		t.Fatalf("SlashNode() error = %v", err)
+	}
+
+	if len(ml.deductCalls) != 1 {
+		t.Fatalf("expected 1 deduct call, got %d", len(ml.deductCalls))
+	}
+	if ml.deductCalls[0].nodeID != "bad-node" {
+		t.Errorf("deduct nodeID = %s, want bad-node", ml.deductCalls[0].nodeID)
+	}
+	if ml.deductCalls[0].amount != 30 {
+		t.Errorf("deduct amount = %d, want 30", ml.deductCalls[0].amount)
+	}
+
+	history, err := v.GetSlashingHistory("bad-node")
+	if err != nil {
+		t.Fatalf("GetSlashingHistory() error = %v", err)
+	}
+	if len(history) != 1 {
+		t.Errorf("slashing history length = %d, want 1", len(history))
+	}
+	if history[0].Error != "submitted fake results" {
+		t.Errorf("slashing reason = %s, want 'submitted fake results'", history[0].Error)
+	}
+}
+
+func TestSlashNodeNoLedger(t *testing.T) {
+	v, _ := NewWithDefaults(":memory:", nil)
+	defer v.Close()
+
+	err := v.SlashNode("bad-node", 30, "no ledger attached")
+	if err != nil {
+		t.Fatalf("SlashNode() with nil ledger should not error: %v", err)
+	}
+}
+
+func TestRewardNodeWithLedger(t *testing.T) {
+	ml := &mockLedger{balance: 50}
+	v, _ := NewWithDefaults(":memory:", ml)
+	defer v.Close()
+
+	err := v.RewardNode("good-node", 25)
+	if err != nil {
+		t.Fatalf("RewardNode() error = %v", err)
+	}
+
+	if len(ml.rewardCalls) != 1 {
+		t.Fatalf("expected 1 reward call, got %d", len(ml.rewardCalls))
+	}
+	if ml.rewardCalls[0].nodeID != "good-node" {
+		t.Errorf("reward nodeID = %s, want good-node", ml.rewardCalls[0].nodeID)
+	}
+	if ml.rewardCalls[0].amount != 25 {
+		t.Errorf("reward amount = %d, want 25", ml.rewardCalls[0].amount)
+	}
+}
+
+func TestRewardNodeNoLedger(t *testing.T) {
+	v, _ := NewWithDefaults(":memory:", nil)
+	defer v.Close()
+
+	err := v.RewardNode("good-node", 25)
+	if err != nil {
+		t.Fatalf("RewardNode() with nil ledger should not error: %v", err)
 	}
 }

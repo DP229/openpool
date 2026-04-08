@@ -14,7 +14,7 @@ import (
 func TestNew(t *testing.T) {
 	r, _ := wasm.New()
 	l, _ := ledger.New(":memory:")
-	v, _ := verification.NewWithDefaults(":memory:")
+	v, _ := verification.NewWithDefaults(":memory:", nil)
 
 	e := New(r, l, v)
 	if e == nil {
@@ -34,7 +34,7 @@ func TestNewNilRuntime(t *testing.T) {
 func TestExecute(t *testing.T) {
 	r, _ := wasm.New()
 	l, _ := ledger.New(":memory:")
-	v, _ := verification.NewWithDefaults(":memory:")
+	v, _ := verification.NewWithDefaults(":memory:", nil)
 
 	e := New(r, l, v)
 
@@ -157,7 +157,7 @@ func TestExecuteWithCredits(t *testing.T) {
 func TestExecuteWithVerification(t *testing.T) {
 	r, _ := wasm.New()
 	l, _ := ledger.New(":memory:")
-	v, _ := verification.NewWithDefaults(":memory:")
+	v, _ := verification.NewWithDefaults(":memory:", nil)
 	defer v.Close()
 
 	e := New(r, l, v)
@@ -287,7 +287,7 @@ func BenchmarkExecute(b *testing.B) {
 func BenchmarkExecuteWithVerification(b *testing.B) {
 	r, _ := wasm.New()
 	l, _ := ledger.New(":memory:")
-	v, _ := verification.NewWithDefaults(":memory:")
+	v, _ := verification.NewWithDefaults(":memory:", nil)
 	e := New(r, l, v)
 
 	ctx := context.Background()

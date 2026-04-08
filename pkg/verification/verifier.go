@@ -13,6 +13,14 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// CreditLedger is the interface for credit operations that the verifier
+// delegates to the canonical ledger. This decouples verification from
+// direct database access on the wrong connection.
+type CreditLedger interface {
+	DeductCredits(nodeID string, amount int) (int, error)
+	RewardCredits(nodeID string, amount int) (int, error)
+}
+
 // VerificationMethod defines how work is verified.
 type VerificationMethod int
 
@@ -39,9 +47,10 @@ type VerificationResult struct {
 
 // Verifier handles task verification.
 type Verifier struct {
-	db  *sql.DB
-	mu  sync.RWMutex
-	cfg Config
+	db     *sql.DB
+	mu     sync.RWMutex
+	cfg    Config
+	ledger CreditLedger
 }
 
 // Config holds verification settings.
@@ -67,7 +76,9 @@ func DefaultConfig() Config {
 }
 
 // New creates a new Verifier.
-func New(dbPath string, cfg Config) (*Verifier, error) {
+// The ledger parameter may be nil; SlashNode/RewardNode will be no-ops
+// if no CreditLedger is provided.
+func New(dbPath string, cfg Config, ledger CreditLedger) (*Verifier, error) {
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return nil, err
@@ -98,7 +109,7 @@ func New(dbPath string, cfg Config) (*Verifier, error) {
 		cfg = DefaultConfig()
 	}
 
-	return &Verifier{db: db, cfg: cfg}, nil
+	return &Verifier{db: db, cfg: cfg, ledger: ledger}, nil
 }
 
 // HashInput computes SHA-256 hash of input data.
@@ -280,11 +291,15 @@ func FormatDurationMs(ms int64) string {
 }
 
 // NewWithDefaults creates a verifier with default config.
-func NewWithDefaults(dbPath string) (*Verifier, error) {
-	return New(dbPath, DefaultConfig())
+// The ledger parameter may be nil; SlashNode/RewardNode will be no-ops without it.
+func NewWithDefaults(dbPath string, ledger CreditLedger) (*Verifier, error) {
+	return New(dbPath, DefaultConfig(), ledger)
 }
 
 // SlashNode deducts credits from a node for bad behavior.
+// It records the slashing event in the verification database and delegates
+// the actual credit deduction to the CreditLedger interface, ensuring the
+// correct database is used.
 func (v *Verifier) SlashNode(nodeID string, amount int, reason string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -293,35 +308,48 @@ func (v *Verifier) SlashNode(nodeID string, amount int, reason string) error {
 		INSERT INTO verification (task_id, method, primary_node, verifier_node,
 			input_hash, output_hash, match, duration_ms, timestamp, error)
 		VALUES ('slash-'||strftime('%s','now'), 0, ?, 'system', '', '', 0, 0, ?, ?)`,
-		nodeID, reason, time.Now().Unix(),
+		nodeID, time.Now().Unix(), reason,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("record slash event: %w", err)
 	}
 
-	_, err = v.db.Exec(`
-		UPDATE ledger SET credits = MAX(0, credits - ?),
-			tasks_failed = tasks_failed + 1,
-			updated_at = ?
-		WHERE node_id = ?`,
-		amount, time.Now().Unix(), nodeID,
-	)
-	return err
+	if v.ledger != nil {
+		newBalance, ledgerErr := v.ledger.DeductCredits(nodeID, amount)
+		if ledgerErr != nil {
+			return fmt.Errorf("deduct credits from ledger: %w", ledgerErr)
+		}
+		_ = newBalance
+	}
+
+	return nil
 }
 
 // RewardNode adds credits to a node for good verification results.
+// It delegates the actual credit addition to the CreditLedger interface,
+// ensuring the correct database is used.
 func (v *Verifier) RewardNode(nodeID string, amount int) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
 	_, err := v.db.Exec(`
-		UPDATE ledger SET credits = credits + ?,
-			tasks_completed = tasks_completed + 1,
-			updated_at = ?
-		WHERE node_id = ?`,
-		amount, time.Now().Unix(), nodeID,
+		INSERT INTO verification (task_id, method, primary_node, verifier_node,
+			input_hash, output_hash, match, duration_ms, timestamp, error)
+		VALUES ('reward-'||strftime('%s','now'), 0, ?, 'system', '', '', 1, 0, ?, 'reward')`,
+		nodeID, time.Now().Unix(),
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("record reward event: %w", err)
+	}
+
+	if v.ledger != nil {
+		_, ledgerErr := v.ledger.RewardCredits(nodeID, amount)
+		if ledgerErr != nil {
+			return fmt.Errorf("reward credits via ledger: %w", ledgerErr)
+		}
+	}
+
+	return nil
 }
 
 // GetSlashingHistory returns all slashing events for a node.

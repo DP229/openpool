@@ -154,6 +154,115 @@ func TestRecordTask(t *testing.T) {
 	}
 }
 
+func TestDeductCredits(t *testing.T) {
+	l, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create ledger: %v", err)
+	}
+	defer l.db.Close()
+
+	l.AddCredits("node1", 100)
+
+	tests := []struct {
+		name     string
+		nodeID   string
+		amount   int
+		expected int
+		wantErr  bool
+	}{
+		{"partial deduction", "node1", 30, 70, false},
+		{"deduct to zero", "node1", 70, 0, false},
+		{"deduct below zero clamps", "node1", 50, 0, false},
+		{"deduct from nonexistent node", "node_new", 10, 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			balance, err := l.DeductCredits(tt.nodeID, tt.amount)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("DeductCredits() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if balance != tt.expected {
+				t.Errorf("DeductCredits(%s, %d) = %d, want %d", tt.nodeID, tt.amount, balance, tt.expected)
+			}
+		})
+	}
+
+	entries := l.GetAll()
+	for _, e := range entries {
+		if e.NodeID == "node1" {
+			if e.TasksFailed < 2 {
+				t.Errorf("node1 TasksFailed = %d, expected >= 2 (deductions increment tasks_failed)", e.TasksFailed)
+			}
+		}
+	}
+}
+
+func TestRewardCredits(t *testing.T) {
+	l, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create ledger: %v", err)
+	}
+	defer l.db.Close()
+
+	l.AddCredits("node1", 50)
+
+	tests := []struct {
+		name     string
+		nodeID   string
+		amount   int
+		expected int
+		wantErr  bool
+	}{
+		{"reward existing node", "node1", 30, 80, false},
+		{"reward again", "node1", 20, 100, false},
+		{"reward new node", "node_reward_new", 75, 75, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			balance, err := l.RewardCredits(tt.nodeID, tt.amount)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("RewardCredits() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if balance != tt.expected {
+				t.Errorf("RewardCredits(%s, %d) = %d, want %d", tt.nodeID, tt.amount, balance, tt.expected)
+			}
+		})
+	}
+
+	entries := l.GetAll()
+	for _, e := range entries {
+		if e.NodeID == "node1" {
+			if e.TasksCompleted < 2 {
+				t.Errorf("node1 TasksCompleted = %d, expected >= 2 (rewards increment tasks_completed)", e.TasksCompleted)
+			}
+		}
+	}
+}
+
+func TestDeductAndRewardHistory(t *testing.T) {
+	l, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create ledger: %v", err)
+	}
+	defer l.db.Close()
+
+	l.AddCredits("node1", 200)
+	l.DeductCredits("node1", 50)
+	l.RewardCredits("node1", 100)
+
+	entries := l.GetAll()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Credits != 250 {
+		t.Errorf("balance = %d, want 250 (200 - 50 + 100)", entries[0].Credits)
+	}
+}
+
 func TestConcurrency(t *testing.T) {
 	l, err := New(":memory:")
 	if err != nil {

@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -23,7 +21,7 @@ import (
 	"github.com/dp229/openpool/pkg/auth"
 	"github.com/dp229/openpool/pkg/ledger"
 	"github.com/dp229/openpool/pkg/middleware"
-	"github.com/dp229/openpool/pkg/net"
+	"github.com/dp229/openpool/pkg/p2p"
 	"github.com/dp229/openpool/pkg/security"
 )
 
@@ -36,7 +34,7 @@ var (
 )
 
 var (
-	flagPort        = flag.Int("port", 9000, "TCP port to listen on")
+	flagPort        = flag.Int("port", 9000, "libp2p TCP port to listen on")
 	flagHTTP        = flag.Int("http", 8080, "HTTP API port (0 to disable)")
 	flagDB          = flag.String("db", "openpool.db", "SQLite ledger path")
 	flagCredits     = flag.Int("credits", 100, "Starting credits")
@@ -47,23 +45,30 @@ var (
 	flagTLSCert     = flag.String("tls-cert", "", "TLS certificate file")
 	flagTLSKey      = flag.String("tls-key", "", "TLS private key file")
 	flagTest        = flag.Bool("test", false, "Run built-in test task")
-	flagSend        = flag.String("send", "", "Send task to peer (peer_ip:port)")
+	flagSend        = flag.String("send", "", "Send task to peer (multiaddr with /p2p/)")
 	flagTaskFile    = flag.String("task", "", "Task JSON file")
+	flagBootstrap   = flag.String("bootstrap", "", "Bootstrap peer multiaddr")
+	flagDHT         = flag.Bool("dht", false, "Enable DHT peer discovery")
 )
 
 func main() {
 	flag.Parse()
 
-	idBytes := make([]byte, 8)
-	rand.Read(idBytes)
-	nodeID := hex.EncodeToString(idBytes)
-	log.SetPrefix(fmt.Sprintf("[%s] ", nodeID[:6]))
-
 	db, err := ledger.New(*flagDB)
 	if err != nil {
 		log.Fatal("Ledger error:", err)
 	}
+
+	node := p2p.NewNode(db)
+	node.Port = *flagPort
+
+	if err := node.Listen(*flagPort); err != nil {
+		log.Fatal("libp2p listen error:", err)
+	}
+
+	nodeID := node.ID()
 	db.AddCredits(nodeID, *flagCredits)
+	log.SetPrefix(fmt.Sprintf("[%s] ", nodeID[:6]))
 	fmt.Printf("%s Ledger: %s | %d credits\n", green.Render("✓"), nodeID[:6], *flagCredits)
 
 	authMgr, err := auth.NewManager(*flagAuthDB)
@@ -75,15 +80,29 @@ func main() {
 	sanitizer := security.NewSanitizer()
 	secMiddleware := middleware.NewSecurityMiddleware(authMgr, *flagRateLimit, *flagAdminSecret, *flagRequireAuth)
 
-	node := net.New(*flagPort)
-	node.ID = nodeID
-	node.DB = db
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	if *flagBootstrap != "" {
+		node.Bootstrap([]string{*flagBootstrap})
+	}
+
+	if *flagDHT {
+		bootstrapAddrs := []string{}
+		if *flagBootstrap != "" {
+			bootstrapAddrs = append(bootstrapAddrs, *flagBootstrap)
+		}
+		if err := node.StartDHT(bootstrapAddrs); err != nil {
+			log.Printf("DHT start: %v", err)
+		} else {
+			if err := node.AdvertiseCapabilities(ctx, []p2p.CapabilityNamespace{p2p.CapCPU}); err != nil {
+				log.Printf("Advertise: %v", err)
+			}
+		}
+	}
+
 	if *flagTest {
-		task := &net.Task{
+		task := &p2p.Task{
 			ID:         "builtin-test",
 			TimeoutSec: 15,
 			Credits:    10,
@@ -106,7 +125,7 @@ func main() {
 		if err != nil {
 			log.Fatal("Task file:", err)
 		}
-		var task net.Task
+		var task p2p.Task
 		json.Unmarshal(data, &task)
 		if task.ID == "" {
 			task.ID = nodeID + "-task"
@@ -127,10 +146,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	if err := node.Listen(ctx); err != nil {
-		log.Fatal("Listen error:", err)
-	}
-
 	if !(*flagHTTP == 0) {
 		go serveHTTP(node, db, authMgr, secMiddleware)
 	}
@@ -143,20 +158,18 @@ func main() {
 	node.Close()
 }
 
-func serveHTTP(n *net.Node, db *ledger.Ledger, authMgr *auth.Manager, secMiddleware *middleware.SecurityMiddleware) {
+func serveHTTP(n *p2p.Node, db *ledger.Ledger, authMgr *auth.Manager, secMiddleware *middleware.SecurityMiddleware) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/status", secMiddleware.RateLimit(secMiddleware.Authenticate(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"node_id":     n.ID,
+			"node_id":     n.ID(),
 			"port":        n.Port,
-			"credits":     db.GetCredits(n.ID),
+			"credits":     db.GetCredits(n.ID()),
 			"cpu_cores":   runtime.NumCPU(),
 			"ram_free_mb": getFreeRAM(),
-			"wasm_ready":  true,
-			"tasks":       n.Tasks(),
 			"peers":       n.PeerCount(),
-			"peer_ids":    n.PeerIDs(),
+			"multiaddrs":  n.Multiaddrs(),
 		})
 	})))
 
@@ -178,68 +191,6 @@ func serveHTTP(n *net.Node, db *ledger.Ledger, authMgr *auth.Manager, secMiddlew
 			authMgr.UseCredits(apiKey.Key, 1)
 		}
 	})))
-
-	mux.HandleFunc("/submit", secMiddleware.RateLimit(secMiddleware.Authenticate(secMiddleware.ValidateTaskInput(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "POST only", http.StatusMethodNotAllowed)
-			return
-		}
-
-		apiKey, ok := middleware.APIKeyFromContext(r.Context())
-		if *flagRequireAuth && !ok {
-			http.Error(w, "Authentication required", http.StatusUnauthorized)
-			return
-		}
-
-		var task net.Task
-		json.NewDecoder(r.Body).Decode(&task)
-		if task.ID == "" {
-			idB := make([]byte, 8)
-			rand.Read(idB)
-			task.ID = hex.EncodeToString(idB)
-		}
-
-		if *flagRequireAuth {
-			if err := security.ValidateCredits(task.Credits); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			if ok && apiKey.Credits < task.Credits {
-				http.Error(w, "Insufficient credits", http.StatusForbidden)
-				return
-			}
-		}
-
-		task.Credits = 10
-		task.State = "pending"
-		task.CreatedAt = time.Now()
-
-		peerAddr := r.URL.Query().Get("peer")
-		ctx := context.Background()
-		if peerAddr != "" {
-			if err := n.SubmitTask(ctx, peerAddr, &task); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			fmt.Printf("%s HTTP: task %s → %s\n", blue.Render("→"), task.ID[:8], peerAddr)
-		} else {
-			result, err := n.RunTask(ctx, &task)
-			task.State = "done"
-			if err != nil {
-				task.State = "failed"
-				task.Error = err.Error()
-			}
-			task.Result = result
-			db.AddCredits(n.ID, task.Credits)
-			fmt.Printf("%s HTTP: task %s local +%d credits\n", green.Render("✓"), task.ID[:8], task.Credits)
-		}
-
-		if *flagRequireAuth && ok {
-			authMgr.UseCredits(apiKey.Key, task.Credits)
-		}
-
-		json.NewEncoder(w).Encode(task)
-	}))))
 
 	mux.HandleFunc("/connect", secMiddleware.RateLimit(secMiddleware.Authenticate(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -399,31 +350,16 @@ func serveHTTP(n *net.Node, db *ledger.Ledger, authMgr *auth.Manager, secMiddlew
 		fmt.Printf("s")
 	}
 	fmt.Printf("://localhost:%d/\n", *flagHTTP)
-	fmt.Printf("   curl http")
-	if tlsEnabled {
-		fmt.Printf("s")
-	}
-	fmt.Printf("://localhost:%d/status\n", *flagHTTP)
-	fmt.Printf("   curl http")
-	if tlsEnabled {
-		fmt.Printf("s")
-	}
-	fmt.Printf("://localhost:%d/ledger\n", *flagHTTP)
-	fmt.Printf("   curl -X POST http")
-	if tlsEnabled {
-		fmt.Printf("s")
-	}
-	fmt.Printf("://localhost:%d/submit -d '{\"wasm_path\":\"\"}'\n", *flagHTTP)
 
-	var err error
+	var srvErr error
 	if tlsEnabled {
-		err = server.ListenAndServeTLS(*flagTLSCert, *flagTLSKey)
+		srvErr = server.ListenAndServeTLS(*flagTLSCert, *flagTLSKey)
 	} else {
-		err = server.ListenAndServe()
+		srvErr = server.ListenAndServe()
 	}
 
-	if err != nil && err != http.ErrServerClosed {
-		log.Printf("HTTP server error: %v", err)
+	if srvErr != nil && srvErr != http.ErrServerClosed {
+		log.Printf("HTTP server error: %v", srvErr)
 	}
 }
 

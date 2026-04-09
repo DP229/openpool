@@ -24,7 +24,7 @@ import (
 	"github.com/dp229/openpool/pkg/executor"
 	"github.com/dp229/openpool/pkg/ledger"
 	"github.com/dp229/openpool/pkg/middleware"
-	"github.com/dp229/openpool/pkg/net"
+	"github.com/dp229/openpool/pkg/p2p"
 	"github.com/dp229/openpool/pkg/resilience"
 	"github.com/dp229/openpool/pkg/security"
 	"github.com/dp229/openpool/pkg/shutdown"
@@ -40,7 +40,7 @@ var (
 )
 
 var (
-	flagPort        = flag.Int("port", 9000, "TCP port to listen on")
+	flagPort        = flag.Int("port", 9000, "libp2p TCP port to listen on")
 	flagHTTP        = flag.Int("http", 8080, "HTTP API port (0 to disable)")
 	flagDB          = flag.String("db", "openpool.db", "SQLite ledger path")
 	flagCredits     = flag.Int("credits", 100, "Starting credits")
@@ -53,14 +53,16 @@ var (
 	flagWorkers     = flag.Int("workers", 4, "Number of worker pool workers")
 	flagQueueSize   = flag.Int("queue", 100, "Task queue size")
 	flagTest        = flag.Bool("test", false, "Run built-in test task")
-	flagSend        = flag.String("send", "", "Send task to peer (peer_ip:port)")
+	flagSend        = flag.String("send", "", "Send task to peer (multiaddr with /p2p/)")
 	flagTaskFile    = flag.String("task", "", "Task JSON file")
 	flagShutTimeout = flag.Int("shutdown-timeout", 30, "Shutdown timeout in seconds")
 	flagMaxFailures = flag.Int("max-failures", 5, "Circuit breaker max failures")
+	flagBootstrap   = flag.String("bootstrap", "", "Bootstrap peer multiaddr")
+	flagDHT         = flag.Bool("dht", false, "Enable DHT peer discovery")
 )
 
 type IntegratedNode struct {
-	Node           *net.Node
+	Node           *p2p.Node
 	DB             *ledger.Ledger
 	AuthMgr        *auth.Manager
 	Executor       *executor.IntegratedExecutor
@@ -73,16 +75,21 @@ type IntegratedNode struct {
 func main() {
 	flag.Parse()
 
-	idBytes := make([]byte, 8)
-	rand.Read(idBytes)
-	nodeID := hex.EncodeToString(idBytes)
-	log.SetPrefix(fmt.Sprintf("[%s] ", nodeID[:6]))
-
 	db, err := ledger.New(*flagDB)
 	if err != nil {
 		log.Fatal("Ledger error:", err)
 	}
+
+	node := p2p.NewNode(db)
+	node.Port = *flagPort
+
+	if err := node.Listen(*flagPort); err != nil {
+		log.Fatal("libp2p listen error:", err)
+	}
+
+	nodeID := node.ID()
 	db.AddCredits(nodeID, *flagCredits)
+	log.SetPrefix(fmt.Sprintf("[%s] ", nodeID[:6]))
 	fmt.Printf("%s Ledger: %s | %d credits\n", green.Render("✓"), nodeID[:6], *flagCredits)
 
 	authMgr, err := auth.NewManager(*flagAuthDB)
@@ -109,10 +116,6 @@ func main() {
 
 	sanitizer := security.NewSanitizer()
 	secMiddleware := middleware.NewSecurityMiddleware(authMgr, *flagRateLimit, *flagAdminSecret, *flagRequireAuth)
-
-	node := net.New(*flagPort)
-	node.ID = nodeID
-	node.DB = db
 
 	shutdownMgr := shutdown.New(
 		shutdown.WithTimeout(time.Duration(*flagShutTimeout)*time.Second),
@@ -150,9 +153,9 @@ func main() {
 	})
 
 	taskHandler := func(ctx context.Context, task *worker.Task) ([]byte, error) {
-		result, err := node.RunTask(ctx, &net.Task{
+		result, err := node.RunTask(ctx, &p2p.Task{
 			ID:         task.ID,
-			Input:      task.Data,
+			Params:     task.Data,
 			TimeoutSec: int(task.Timeout.Seconds()),
 		})
 		if err != nil {
@@ -169,8 +172,27 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	if *flagBootstrap != "" {
+		node.Bootstrap([]string{*flagBootstrap})
+	}
+
+	if *flagDHT {
+		bootstrapAddrs := []string{}
+		if *flagBootstrap != "" {
+			bootstrapAddrs = append(bootstrapAddrs, *flagBootstrap)
+		}
+		if err := node.StartDHT(bootstrapAddrs); err != nil {
+			log.Printf("DHT start: %v", err)
+		} else {
+			fmt.Printf("%s DHT enabled\n", green.Render("✓"))
+			if err := node.AdvertiseCapabilities(ctx, []p2p.CapabilityNamespace{p2p.CapCPU}); err != nil {
+				log.Printf("Advertise: %v", err)
+			}
+		}
+	}
+
 	if *flagTest {
-		task := &net.Task{
+		task := &p2p.Task{
 			ID:         "builtin-test",
 			TimeoutSec: 15,
 			Credits:    10,
@@ -193,10 +215,12 @@ func main() {
 		if err != nil {
 			log.Fatal("Task file:", err)
 		}
-		var task net.Task
+		var task p2p.Task
 		json.Unmarshal(data, &task)
 		if task.ID == "" {
-			task.ID = nodeID + "-task"
+			idB := make([]byte, 8)
+			rand.Read(idB)
+			task.ID = hex.EncodeToString(idB)
 		}
 		task.Credits = 10
 		task.State = "pending"
@@ -212,10 +236,6 @@ func main() {
 		}
 		<-ctx.Done()
 		os.Exit(0)
-	}
-
-	if err := node.Listen(ctx); err != nil {
-		log.Fatal("Listen error:", err)
 	}
 
 	if !(*flagHTTP == 0) {
@@ -235,9 +255,9 @@ func serveHTTP(n *IntegratedNode) {
 
 	mux.HandleFunc("/status", n.SecMiddleware.RateLimit(n.SecMiddleware.Authenticate(func(w http.ResponseWriter, r *http.Request) {
 		health := n.Executor.HealthCheck()
-		health["node_id"] = n.Node.ID
+		health["node_id"] = n.Node.ID()
 		health["port"] = n.Node.Port
-		health["credits"] = n.DB.GetCredits(n.Node.ID)
+		health["credits"] = n.DB.GetCredits(n.Node.ID())
 		health["cpu_cores"] = runtime.NumCPU()
 		health["ram_free_mb"] = getFreeRAM()
 		health["peers"] = n.Node.PeerCount()
@@ -275,7 +295,7 @@ func serveHTTP(n *IntegratedNode) {
 			return
 		}
 
-		var task net.Task
+		var task p2p.Task
 		json.NewDecoder(r.Body).Decode(&task)
 		if task.ID == "" {
 			idB := make([]byte, 8)
@@ -320,7 +340,7 @@ func serveHTTP(n *IntegratedNode) {
 			if result != nil {
 				task.Result = result.Result
 			}
-			n.DB.AddCredits(n.Node.ID, task.Credits)
+			n.DB.AddCredits(n.Node.ID(), task.Credits)
 			fmt.Printf("%s HTTP: task %s local +%d credits\n", green.Render("✓"), task.ID[:8], task.Credits)
 		}
 
@@ -507,15 +527,15 @@ func serveHTTP(n *IntegratedNode) {
 	}
 	fmt.Printf("://localhost:%d/submit -d '{\"wasm_path\":\"\"}'\n", *flagHTTP)
 
-	var err error
+	var srvErr error
 	if tlsEnabled {
-		err = server.ListenAndServeTLS(*flagTLSCert, *flagTLSKey)
+		srvErr = server.ListenAndServeTLS(*flagTLSCert, *flagTLSKey)
 	} else {
-		err = server.ListenAndServe()
+		srvErr = server.ListenAndServe()
 	}
 
-	if err != nil && err != http.ErrServerClosed {
-		log.Printf("HTTP server error: %v", err)
+	if srvErr != nil && srvErr != http.ErrServerClosed {
+		log.Printf("HTTP server error: %v", srvErr)
 	}
 }
 

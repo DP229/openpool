@@ -1,68 +1,191 @@
-// Package p2p provides libp2p-based P2P networking with NAT traversal and DHT discovery.
 package p2p
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
+	record "github.com/libp2p/go-libp2p-record"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multihash"
 )
 
-// OpenPoolDHTKey is the DHT key used for peer discovery.
-const OpenPoolDHTKey = "/openpool/peers"
+const (
+	NamespaceComputeCPU  = "/openpool/compute/cpu"
+	NamespaceComputeGPU  = "/openpool/compute/gpu"
+	NamespaceComputeWASM = "/openpool/compute/wasm"
+)
 
-// StartDHT starts a DHT server on the node (can be queried by other nodes).
-// Pass bootstrap multiaddrs to join an existing DHT network.
+type CapabilityNamespace string
+
+var (
+	CapCPU  CapabilityNamespace = NamespaceComputeCPU
+	CapGPU  CapabilityNamespace = NamespaceComputeGPU
+	CapWASM CapabilityNamespace = NamespaceComputeWASM
+)
+
+type DHTClient interface {
+	Bootstrap(ctx context.Context) error
+	Close() error
+	GetClosestPeers(ctx context.Context, key string) ([]peer.ID, error)
+	Provide(ctx context.Context, key cid.Cid, announce bool) error
+	FindProviders(ctx context.Context, key cid.Cid) ([]peer.AddrInfo, error)
+}
+
+type openpoolValidator struct{}
+
+func (v openpoolValidator) Validate(key string, value []byte) error {
+	ns, _, err := record.SplitKey(key)
+	if err != nil {
+		return fmt.Errorf("invalid record key: %w", err)
+	}
+	if ns != "openpool" {
+		return fmt.Errorf("unsupported namespace: %s", ns)
+	}
+	return nil
+}
+
+func (v openpoolValidator) Select(key string, values [][]byte) (int, error) {
+	return 0, nil
+}
+
+func namespaceToCID(ns CapabilityNamespace) (cid.Cid, error) {
+	h, err := multihash.Sum([]byte(ns), multihash.SHA2_256, -1)
+	if err != nil {
+		return cid.Cid{}, fmt.Errorf("hash namespace %s: %w", ns, err)
+	}
+	return cid.NewCidV1(cid.Raw, h), nil
+}
+
 func (n *Node) StartDHT(bootstrapAddrs []string) error {
 	ds := datastore.NewMapDatastore()
 
-	// Create a full DHT server (responds to queries from other nodes)
 	var err error
 	n.DHTClient, err = dht.New(n.ctx, n.Host,
 		dht.Datastore(ds),
-		dht.Mode(dht.ModeAutoServer), // becomes server when it has peers
+		dht.Mode(dht.ModeAutoServer),
+		dht.Validator(record.NamespacedValidator{
+			"openpool": openpoolValidator{},
+		}),
 	)
 	if err != nil {
 		return err
 	}
 
-	// Connect to bootstrap peers
 	for _, addr := range bootstrapAddrs {
 		if err := n.Connect(n.ctx, addr); err != nil {
-			log.Printf("[%s] DHT bootstrap %s: %v", n.ID[:6], addr, err)
+			log.Printf("[%s] DHT bootstrap %s: %v", shortID(n.ID()), addr, err)
 		} else {
-			log.Printf("[%s] DHT bootstrap connected: %s", n.ID[:6], extractPeerID(addr))
+			log.Printf("[%s] DHT bootstrap connected: %s", shortID(n.ID()), extractPeerID(addr))
 		}
 	}
 
-	// Bootstrap the DHT routing table in background
 	go func() {
 		ctx, cancel := context.WithTimeout(n.ctx, 30*time.Second)
 		defer cancel()
 		if err := n.DHTClient.Bootstrap(ctx); err != nil {
-			log.Printf("[%s] DHT bootstrap: %v", n.ID[:6], err)
+			log.Printf("[%s] DHT bootstrap: %v", shortID(n.ID()), err)
 		} else {
-			log.Printf("[%s] DHT bootstrapped", n.ID[:6])
+			log.Printf("[%s] DHT bootstrapped", shortID(n.ID()))
 		}
 	}()
 
 	return nil
 }
 
-// FindPeers queries the DHT for peers near the OpenPool discovery key.
-// Returns peer IDs found in the DHT. Falls back to connected peers if DHT has no results.
+func (n *Node) AdvertiseCapabilities(ctx context.Context, caps []CapabilityNamespace) error {
+	if n.DHTClient == nil {
+		return fmt.Errorf("DHT not started")
+	}
+
+	for _, cap := range caps {
+		contentID, err := namespaceToCID(cap)
+		if err != nil {
+			log.Printf("[%s] CID for %s: %v", shortID(n.ID()), cap, err)
+			continue
+		}
+
+		if err := n.DHTClient.Provide(ctx, contentID, true); err != nil {
+			log.Printf("[%s] advertise %s: %v", shortID(n.ID()), cap, err)
+			continue
+		}
+		log.Printf("[%s] advertised capability: %s (cid: %s)", shortID(n.ID()), cap, contentID.String()[:16]+"…")
+	}
+	return nil
+}
+
+func (n *Node) DiscoverWorkers(ctx context.Context, cap CapabilityNamespace, limit int) ([]peer.AddrInfo, error) {
+	if n.DHTClient == nil {
+		return nil, fmt.Errorf("DHT not started")
+	}
+
+	contentID, err := namespaceToCID(cap)
+	if err != nil {
+		return nil, fmt.Errorf("CID for %s: %w", cap, err)
+	}
+
+	providers, err := n.DHTClient.FindProviders(ctx, contentID)
+	if err != nil {
+		return nil, fmt.Errorf("find providers for %s: %w", cap, err)
+	}
+
+	var verified []peer.AddrInfo
+	for _, info := range providers {
+		if info.ID == n.Host.ID() {
+			continue
+		}
+
+		if err := n.verifyPeer(ctx, info.ID); err != nil {
+			log.Printf("[%s] verify peer %s: %v — skipping", shortID(n.ID()), shortID(info.ID.String()), err)
+			continue
+		}
+
+		verified = append(verified, info)
+		if limit > 0 && len(verified) >= limit {
+			break
+		}
+	}
+
+	log.Printf("[%s] discovered %d verified workers for %s (of %d raw)", shortID(n.ID()), len(verified), cap, len(providers))
+	return verified, nil
+}
+
+func (n *Node) verifyPeer(ctx context.Context, pid peer.ID) error {
+	env, err := n.Host.Peerstore().Get(pid, "Envelope")
+	if err == nil && env != nil {
+		return nil
+	}
+
+	_, sigErr := n.Host.Peerstore().Get(pid, "SignedRecord")
+	if sigErr == nil {
+		return nil
+	}
+
+	if n.Host.Network().Connectedness(pid) == network.Connected {
+		_ = env
+		return nil
+	}
+
+	if err := n.Host.Connect(ctx, peer.AddrInfo{ID: pid}); err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+
+	return nil
+}
+
 func (n *Node) FindPeers(ctx context.Context, limit int) ([]peer.ID, error) {
 	if n.DHTClient == nil {
 		return nil, nil
 	}
 
-	peerIDs, err := n.DHTClient.GetClosestPeers(ctx, OpenPoolDHTKey)
+	peerIDs, err := n.DHTClient.GetClosestPeers(ctx, "/openpool/peers")
 	if err != nil {
-		// Fall back to peerstore peers (nodes we've directly connected to)
-		log.Printf("[%s] DHT query failed: %v — using peerstore peers", n.ID[:6], err)
+		log.Printf("[%s] DHT query failed: %v — using peerstore peers", shortID(n.ID()), err)
 		return n.getPeerstorePeers(limit), nil
 	}
 
@@ -72,7 +195,6 @@ func (n *Node) FindPeers(ctx context.Context, limit int) ([]peer.ID, error) {
 	return peerIDs, nil
 }
 
-// getPeerstorePeers returns peers from our direct connections.
 func (n *Node) getPeerstorePeers(limit int) []peer.ID {
 	if n.Host == nil {
 		return nil
@@ -84,7 +206,6 @@ func (n *Node) getPeerstorePeers(limit int) []peer.ID {
 	return peers
 }
 
-// CloseDHT shuts down the DHT client.
 func (n *Node) CloseDHT() error {
 	if n.DHTClient != nil {
 		return n.DHTClient.Close()

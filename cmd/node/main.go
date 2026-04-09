@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -20,10 +18,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dp229/openpool/pkg/ledger"
-	"github.com/dp229/openpool/pkg/net"
+	"github.com/dp229/openpool/pkg/p2p"
 )
 
-// ── Styles ──────────────────────────────────────────────────────────────
 var (
 	green  = lipgloss.NewStyle().Foreground(lipgloss.Color("#5cb85c"))
 	blue   = lipgloss.NewStyle().Foreground(lipgloss.Color("#5bc0de"))
@@ -32,47 +29,44 @@ var (
 	cyan   = lipgloss.NewStyle().Foreground(lipgloss.Color("#337ab7"))
 )
 
-// ── Flags ──────────────────────────────────────────────────────────────
 var (
-	flagPort      = flag.Int("port", 9000, "TCP port to listen on")
-	flagConnect   = flag.String("connect", "", "Connect to a peer (ip:port)")
-	flagBootstrap = flag.String("bootstrap", "", "Connect to bootstrap peer (ip:port)")
+	flagPort      = flag.Int("port", 9000, "libp2p TCP port to listen on")
+	flagConnect   = flag.String("connect", "", "Connect to a peer (multiaddr)")
+	flagBootstrap = flag.String("bootstrap", "", "Connect to bootstrap peer (multiaddr)")
 	flagDB        = flag.String("db", "openpool.db", "SQLite ledger path")
 	flagCredits   = flag.Int("credits", 100, "Starting credits")
 	flagHTTP      = flag.Bool("no-http", false, "Disable HTTP API")
 	flagTest      = flag.Bool("test", false, "Run built-in test task")
-	flagSend      = flag.String("send", "", "Send task to peer (peer_ip:port)")
+	flagSend      = flag.String("send", "", "Send task to peer (multiaddr with /p2p/)")
 	flagTaskFile  = flag.String("task", "", "Task JSON file")
+	flagDHT       = flag.Bool("dht", false, "Enable DHT peer discovery")
 )
 
 func main() {
 	flag.Parse()
 
-	// ── Node ID ────────────────────────────────────────────────────────
-	idBytes := make([]byte, 8)
-	rand.Read(idBytes)
-	nodeID := hex.EncodeToString(idBytes)
-	log.SetPrefix(fmt.Sprintf("[%s] ", nodeID[:6]))
-
-	// ── Ledger ─────────────────────────────────────────────────────────
 	db, err := ledger.New(*flagDB)
 	if err != nil {
 		log.Fatal("Ledger error:", err)
 	}
-	db.AddCredits(nodeID, *flagCredits)
-	fmt.Printf("%s Ledger: %s | %d credits\n", green.Render("✓"), nodeID[:6], *flagCredits)
 
-	// ── Build Node ────────────────────────────────────────────────────
-	node := net.New(*flagPort)
-	node.ID = nodeID
-	node.DB = db
+	node := p2p.NewNode(db)
+	node.Port = *flagPort
+
+	if err := node.Listen(*flagPort); err != nil {
+		log.Fatal("libp2p listen error:", err)
+	}
+
+	nodeID := node.ID()
+	db.AddCredits(nodeID, *flagCredits)
+	log.SetPrefix(fmt.Sprintf("[%s] ", nodeID[:6]))
+	fmt.Printf("%s Ledger: %s | %d credits\n", green.Render("✓"), nodeID[:6], *flagCredits)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// ── Test mode ───────────────────────────────────────────────────
 	if *flagTest {
-		task := &net.Task{
+		task := &p2p.Task{
 			ID:         "builtin-test",
 			TimeoutSec: 15,
 			Credits:    10,
@@ -90,13 +84,12 @@ func main() {
 		os.Exit(0)
 	}
 
-	// ── Send task to peer ──────────────────────────────────────────
 	if *flagSend != "" && *flagTaskFile != "" {
 		data, err := os.ReadFile(*flagTaskFile)
 		if err != nil {
 			log.Fatal("Task file:", err)
 		}
-		var task net.Task
+		var task p2p.Task
 		json.Unmarshal(data, &task)
 		if task.ID == "" {
 			task.ID = nodeID + "-task"
@@ -113,16 +106,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	// ── Start listening ──────────────────────────────────────────────
-	if err := node.Listen(ctx); err != nil {
-		log.Fatal("Listen error:", err)
-	}
-
-	// ── Connect ────────────────────────────────────────────────────
 	if *flagBootstrap != "" {
-		if err := node.Connect(ctx, *flagBootstrap); err != nil {
-			fmt.Printf("%s Bootstrap connect: %v\n", yellow.Render("⚠"), err)
-		}
+		node.Bootstrap([]string{*flagBootstrap})
 	}
 	if *flagConnect != "" {
 		if err := node.Connect(ctx, *flagConnect); err != nil {
@@ -130,12 +115,24 @@ func main() {
 		}
 	}
 
-	// ── HTTP API ───────────────────────────────────────────────────
+	if *flagDHT {
+		bootstrapAddrs := []string{}
+		if *flagBootstrap != "" {
+			bootstrapAddrs = append(bootstrapAddrs, *flagBootstrap)
+		}
+		if err := node.StartDHT(bootstrapAddrs); err != nil {
+			log.Printf("DHT start: %v", err)
+		} else {
+			if err := node.AdvertiseCapabilities(ctx, []p2p.CapabilityNamespace{p2p.CapCPU}); err != nil {
+				log.Printf("Advertise: %v", err)
+			}
+		}
+	}
+
 	if !*flagHTTP {
 		go serveHTTP(node, db)
 	}
 
-	// ── Shutdown ───────────────────────────────────────────────────
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
@@ -144,22 +141,18 @@ func main() {
 	node.Close()
 }
 
-// ── HTTP API ───────────────────────────────────────────────────────────
-
-func serveHTTP(n *net.Node, db *ledger.Ledger) {
+func serveHTTP(n *p2p.Node, db *ledger.Ledger) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"node_id":     n.ID,
-			"port":       n.Port,
-			"credits":    db.GetCredits(n.ID),
-			"cpu_cores":  runtime.NumCPU(),
+			"node_id":     n.ID(),
+			"port":        n.Port,
+			"credits":     db.GetCredits(n.ID()),
+			"cpu_cores":   runtime.NumCPU(),
 			"ram_free_mb": getFreeRAM(),
-			"wasm_ready": true,
-			"tasks":     n.Tasks(),
-			"peers":     n.PeerCount(),
-			"peer_ids":  n.PeerIDs(),
+			"peers":       n.PeerCount(),
+			"multiaddrs":  n.Multiaddrs(),
 		})
 	})
 
@@ -167,50 +160,14 @@ func serveHTTP(n *net.Node, db *ledger.Ledger) {
 		json.NewEncoder(w).Encode(db.GetAll())
 	})
 
-	mux.HandleFunc("/submit", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "POST only", 405)
-			return
-		}
-		var task net.Task
-		json.NewDecoder(r.Body).Decode(&task)
-		if task.ID == "" {
-			idB := make([]byte, 8)
-			rand.Read(idB)
-			task.ID = hex.EncodeToString(idB)
-		}
-		task.Credits = 10
-		task.State = "pending"
-		task.CreatedAt = time.Now()
-
-		peerAddr := r.URL.Query().Get("peer")
-		ctx := context.Background()
-		if peerAddr != "" {
-			if err := n.SubmitTask(ctx, peerAddr, &task); err != nil {
-				http.Error(w, err.Error(), 400)
-				return
-			}
-			fmt.Printf("%s HTTP: task %s → %s\n", blue.Render("→"), task.ID[:8], peerAddr)
-		} else {
-			result, err := n.RunTask(ctx, &task)
-			task.State = "done"
-			if err != nil {
-				task.State = "failed"
-				task.Error = err.Error()
-			}
-			task.Result = result
-			db.AddCredits(n.ID, task.Credits)
-			fmt.Printf("%s HTTP: task %s local +%d credits\n", green.Render("✓"), task.ID[:8], task.Credits)
-		}
-		json.NewEncoder(w).Encode(task)
-	})
-
 	mux.HandleFunc("/connect", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST only", 405)
 			return
 		}
-		var req struct{ Address string `json:"address"` }
+		var req struct {
+			Address string `json:"address"`
+		}
 		json.NewDecoder(r.Body).Decode(&req)
 		ctx := context.Background()
 		if err := n.Connect(ctx, req.Address); err != nil {
@@ -220,17 +177,11 @@ func serveHTTP(n *net.Node, db *ledger.Ledger) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "connected", "address": req.Address})
 	})
 
-	port := n.Port + 1
-	addr := fmt.Sprintf(":%d", port)
-	fmt.Printf("%s HTTP API: http://localhost:%d/\n", cyan.Render("🌐"), port)
-	fmt.Printf("   curl http://localhost:%d/status\n", port)
-	fmt.Printf("   curl http://localhost:%d/ledger\n", port)
-	fmt.Printf("   curl -X POST http://localhost:%d/submit -d '{\"wasm_path\":\"\"}'\n", port)
+	addr := fmt.Sprintf(":%d", n.Port+1)
+	fmt.Printf("%s HTTP API: http://localhost%s/\n", cyan.Render("🌐"), addr)
 
 	http.ListenAndServe(addr, mux)
 }
-
-// ── Helpers ──────────────────────────────────────────────────────────
 
 func getFreeRAM() int {
 	data, _ := os.ReadFile("/proc/meminfo")

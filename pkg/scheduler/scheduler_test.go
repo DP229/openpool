@@ -138,7 +138,6 @@ func TestMapReduceReduce(t *testing.T) {
 func TestNewScheduler(t *testing.T) {
 	ledger := newMockLedger()
 	node := p2p.NewNode(ledger)
-	node.ID = "test-node"
 
 	sched := New(node, "test-node")
 
@@ -150,6 +149,61 @@ func TestNewScheduler(t *testing.T) {
 	}
 	if sched.nodeID != "test-node" {
 		t.Errorf("scheduler.nodeID = %s, want test-node", sched.nodeID)
+	}
+	if cap(sched.sem) != DefaultMaxInFlight {
+		t.Errorf("semaphore cap = %d, want %d", cap(sched.sem), DefaultMaxInFlight)
+	}
+}
+
+func TestNewWithConfig(t *testing.T) {
+	ledger := newMockLedger()
+	node := p2p.NewNode(ledger)
+	cfg := SchedulerConfig{
+		MaxRetries:      5,
+		MaxInFlight:     16,
+		RetryBaseMs:     100,
+		RetryMaxMs:      5000,
+		RetryMultiplier: 3.0,
+		CollectTimeout:  10 * time.Minute,
+	}
+
+	sched := NewWithConfig(node, "custom-node", cfg)
+
+	if sched.config.MaxRetries != 5 {
+		t.Errorf("MaxRetries = %d, want 5", sched.config.MaxRetries)
+	}
+	if cap(sched.sem) != 16 {
+		t.Errorf("semaphore cap = %d, want 16", cap(sched.sem))
+	}
+	if sched.config.RetryMultiplier != 3.0 {
+		t.Errorf("RetryMultiplier = %f, want 3.0", sched.config.RetryMultiplier)
+	}
+}
+
+func TestSchedulerConfig_Defaults(t *testing.T) {
+	cfg := DefaultSchedulerConfig()
+	if cfg.MaxInFlight != DefaultMaxInFlight {
+		t.Errorf("MaxInFlight = %d, want %d", cfg.MaxInFlight, DefaultMaxInFlight)
+	}
+	if cfg.MaxRetries != DefaultMaxRetries {
+		t.Errorf("MaxRetries = %d, want %d", cfg.MaxRetries, DefaultMaxRetries)
+	}
+	if cfg.CollectTimeout != DefaultCollectTimeout {
+		t.Errorf("CollectTimeout = %v, want %v", cfg.CollectTimeout, DefaultCollectTimeout)
+	}
+}
+
+func TestSchedulerConfig_ZeroDefaults(t *testing.T) {
+	ledger := newMockLedger()
+	node := p2p.NewNode(ledger)
+	cfg := SchedulerConfig{}
+	sched := NewWithConfig(node, "zero-node", cfg)
+
+	if sched.config.MaxInFlight != DefaultMaxInFlight {
+		t.Errorf("zero MaxInFlight should default to %d", DefaultMaxInFlight)
+	}
+	if sched.config.MaxRetries != DefaultMaxRetries {
+		t.Errorf("zero MaxRetries should default to %d", DefaultMaxRetries)
 	}
 }
 
@@ -202,7 +256,6 @@ func TestCountSuccess(t *testing.T) {
 func TestSubmitChunked_NoPeers(t *testing.T) {
 	ledger := newMockLedger()
 	node := p2p.NewNode(ledger)
-	node.ID = "test-scheduler"
 
 	sched := New(node, "test-scheduler")
 
@@ -223,5 +276,145 @@ func TestSubmitChunked_NoPeers(t *testing.T) {
 	_, err := sched.SubmitChunked(ctx, task, mr)
 	if err == nil {
 		t.Error("SubmitChunked should fail without peers")
+	}
+}
+
+// ── Semaphore (Backpressure) Tests ─────────────────────────────────────────────────
+
+func TestSemaphore_Capacity(t *testing.T) {
+	ledger := newMockLedger()
+	node := p2p.NewNode(ledger)
+	cfg := SchedulerConfig{MaxInFlight: 4}
+	sched := NewWithConfig(node, "sem-test", cfg)
+
+	if cap(sched.sem) != 4 {
+		t.Errorf("semaphore capacity = %d, want 4", cap(sched.sem))
+	}
+}
+
+func TestSemaphore_AcquireRelease(t *testing.T) {
+	sem := make(chan struct{}, 2)
+
+	sem <- struct{}{}
+	sem <- struct{}{}
+
+	select {
+	case sem <- struct{}{}:
+		t.Error("semaphore should be full")
+	default:
+	}
+
+	<-sem
+	select {
+	case sem <- struct{}{}:
+	default:
+		t.Error("semaphore should have room after release")
+	}
+}
+
+// ── Checkpoint Store Tests ─────────────────────────────────────────────────────────
+
+func TestCheckpointStore_SaveLoad(t *testing.T) {
+	store := NewCheckpointStore(NewMemoryCheckpointer())
+
+	cp := &Checkpoint{
+		JobID:     "job-42",
+		Completed: map[string]bool{"a": true, "b": true},
+		Results: map[string][]byte{
+			"a": []byte(`{"node_id":"a","success":true}`),
+			"b": []byte(`{"node_id":"b","success":true}`),
+		},
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	}
+
+	if err := store.Save(cp); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, err := store.Load("job-42")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if loaded.JobID != "job-42" {
+		t.Errorf("JobID = %s, want job-42", loaded.JobID)
+	}
+	if len(loaded.Completed) != 2 {
+		t.Errorf("Completed = %d, want 2", len(loaded.Completed))
+	}
+	if !loaded.Completed["a"] {
+		t.Error("node 'a' should be marked completed")
+	}
+}
+
+func TestCheckpointStore_Delete(t *testing.T) {
+	store := NewCheckpointStore(NewMemoryCheckpointer())
+
+	cp := &Checkpoint{JobID: "job-del", Completed: map[string]bool{}}
+	store.Save(cp)
+
+	if err := store.Delete("job-del"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	_, err := store.Load("job-del")
+	if err == nil {
+		t.Error("Load after Delete should fail")
+	}
+}
+
+func TestCheckpointStore_LoadMissing(t *testing.T) {
+	store := NewCheckpointStore(NewMemoryCheckpointer())
+
+	_, err := store.Load("nonexistent")
+	if err == nil {
+		t.Error("Load nonexistent should return error")
+	}
+}
+
+func TestMemoryCheckpointer(t *testing.T) {
+	mc := NewMemoryCheckpointer()
+
+	cp1 := &Checkpoint{JobID: "j1", Completed: map[string]bool{"x": true}}
+	cp2 := &Checkpoint{JobID: "j2", Completed: map[string]bool{"y": true}}
+
+	mc.CheckpointSave(cp1)
+	mc.CheckpointSave(cp2)
+
+	loaded, err := mc.CheckpointLoad("j2")
+	if err != nil {
+		t.Fatalf("Load j2: %v", err)
+	}
+	if !loaded.Completed["y"] {
+		t.Error("j2 should have y completed")
+	}
+
+	mc.CheckpointDelete("j1")
+	if _, err := mc.CheckpointLoad("j1"); err == nil {
+		t.Error("j1 should be deleted")
+	}
+}
+
+func TestSchedulerCheckpoint_Integration(t *testing.T) {
+	ledger := newMockLedger()
+	node := p2p.NewNode(ledger)
+	sched := New(node, "cp-test")
+
+	cp := &Checkpoint{
+		JobID:     "dag-job-1",
+		Completed: map[string]bool{"tile-0-0": true},
+		Results:   map[string][]byte{},
+	}
+	if err := sched.SaveCheckpoint(cp); err != nil {
+		t.Fatalf("SaveCheckpoint: %v", err)
+	}
+
+	loaded, err := sched.LoadCheckpoint("dag-job-1")
+	if err != nil {
+		t.Fatalf("LoadCheckpoint: %v", err)
+	}
+	if !loaded.Completed["tile-0-0"] {
+		t.Error("tile-0-0 should be completed in loaded checkpoint")
 	}
 }

@@ -20,6 +20,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	multiaddr "github.com/multiformats/go-multiaddr"
+
+	"github.com/dp229/openpool/pkg/resilience"
 )
 
 // ProtocolID is the OpenPool libp2p protocol identifier.
@@ -29,18 +31,41 @@ const ProtocolID = "/openpool/1.0"
 
 // Node is a libp2p-backed P2P node with NAT traversal and DHT discovery.
 type Node struct {
-	ID     string
 	Host   host.Host
 	Ledger LedgerDB
+	Port   int
 
 	tasks     map[string]*Task
 	taskChans map[string]chan *TaskResult
 
-	ctx            context.Context
-	cancel         context.CancelFunc
-	mu             sync.RWMutex
-	DHTClient      interface{ Bootstrap(ctx context.Context) error; Close() error; GetClosestPeers(ctx context.Context, key string) ([]peer.ID, error) } // kad-dht client (started lazily)
-	PeerstorePath  string  // Path to peerstore JSON file
+	ctx           context.Context
+	cancel        context.CancelFunc
+	mu            sync.RWMutex
+	DHTClient     DHTClient
+	PeerBreakers  *resilience.CircuitBreakerGroup
+	PeerstorePath string
+}
+
+// ID returns the canonical libp2p peer.ID for this node.
+// Before the host is initialized, returns an empty string.
+func (n *Node) ID() string {
+	if n.Host == nil {
+		return ""
+	}
+	return n.Host.ID().String()
+}
+
+// PeerCount returns the number of connected peers.
+func (n *Node) PeerCount() int {
+	if n.Host == nil {
+		return 0
+	}
+	return len(n.Host.Network().Peers())
+}
+
+// RunTask executes a task locally (used by the integrated executor).
+func (n *Node) RunTask(ctx context.Context, task *Task) (json.RawMessage, error) {
+	return n.executeTask(task)
 }
 
 // LedgerDB is the database interface.
@@ -58,6 +83,11 @@ func NewNode(ledger LedgerDB) *Node {
 		taskChans: make(map[string]chan *TaskResult),
 		ctx:       ctx,
 		cancel:    cancel,
+		PeerBreakers: resilience.NewCircuitBreakerGroup(resilience.CircuitBreakerConfig{
+			MaxFailures:   3,
+			Timeout:       30 * time.Second,
+			HalfOpenLimit: 1,
+		}),
 	}
 }
 
@@ -66,13 +96,13 @@ func (n *Node) SavePeerstore() error {
 	if n.PeerstorePath == "" || n.Host == nil {
 		return nil
 	}
-	
+
 	type peerInfo struct {
 		ID       string   `json:"id"`
 		Addrs    []string `json:"addrs"`
 		LastSeen int64    `json:"last_seen"`
 	}
-	
+
 	var peers []peerInfo
 	for _, p := range n.Host.Network().Peers() {
 		addrs := n.Host.Peerstore().Addrs(p)
@@ -88,7 +118,7 @@ func (n *Node) SavePeerstore() error {
 			})
 		}
 	}
-	
+
 	data, err := json.MarshalIndent(peers, "", "  ")
 	if err != nil {
 		return err
@@ -101,7 +131,7 @@ func (n *Node) LoadPeerstore() ([]peer.AddrInfo, error) {
 	if n.PeerstorePath == "" {
 		return nil, nil
 	}
-	
+
 	data, err := ioutil.ReadFile(n.PeerstorePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -109,18 +139,18 @@ func (n *Node) LoadPeerstore() ([]peer.AddrInfo, error) {
 		}
 		return nil, err
 	}
-	
+
 	type peerInfo struct {
 		ID       string   `json:"id"`
 		Addrs    []string `json:"addrs"`
 		LastSeen int64    `json:"last_seen"`
 	}
-	
+
 	var peers []peerInfo
 	if err := json.Unmarshal(data, &peers); err != nil {
 		return nil, err
 	}
-	
+
 	var result []peer.AddrInfo
 	for _, p := range peers {
 		pid, err := peer.Decode(p.ID)
@@ -137,8 +167,8 @@ func (n *Node) LoadPeerstore() ([]peer.AddrInfo, error) {
 		}
 		result = append(result, peer.AddrInfo{ID: pid, Addrs: addrs})
 	}
-	
-	log.Printf("[%s] loaded %d peers from peerstore", n.ID[:6], len(result))
+
+	log.Printf("[%s] loaded %d peers from peerstore", shortID(n.ID()), len(result))
 	return result, nil
 }
 
@@ -148,7 +178,7 @@ func (n *Node) LoadPeerstore() ([]peer.AddrInfo, error) {
 func (n *Node) Listen(port int) error {
 	// Load persisted peers first (but can't use them until host is up)
 	knownPeers, _ := n.LoadPeerstore()
-	
+
 	h, err := libp2p.New(
 		libp2p.Transport(tcp.NewTCPTransport),
 		libp2p.EnableRelay(),
@@ -163,14 +193,15 @@ func (n *Node) Listen(port int) error {
 
 	// Restore connections to known peers
 	for _, p := range knownPeers {
-		ctx, cancel := context.WithTimeout(n.ctx, 5*time.Second)
-		if err := n.Host.Connect(ctx, p); err != nil {
+		connectCtx, cancel := context.WithTimeout(n.ctx, 5*time.Second)
+		if err := n.Host.Connect(connectCtx, p); err != nil {
+			cancel()
 			continue
 		}
-		log.Printf("[%s] restored peer %s", n.ID[:6], p.ID.String()[:8])
 		cancel()
+		log.Printf("[%s] restored peer %s", shortID(n.ID()), p.ID.String()[:8])
 	}
-	
+
 	// Enable periodic peerstore save
 	go func() {
 		for {
@@ -179,7 +210,7 @@ func (n *Node) Listen(port int) error {
 		}
 	}()
 
-	log.Printf("[%s] libp2p ready", n.ID[:6])
+	log.Printf("[%s] libp2p ready", shortID(n.ID()))
 	for _, addr := range h.Addrs() {
 		log.Printf("  listen: %s/p2p/%s", addr, h.ID().String())
 	}
@@ -195,12 +226,12 @@ func (n *Node) Bootstrap(peers []string) {
 	for _, addr := range peers {
 		ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
 		if err := n.Connect(ctx, addr); err != nil {
-			log.Printf("[%s] bootstrap %s: %v", n.ID[:6], addr, err)
+			log.Printf("[%s] bootstrap %s: %v", shortID(n.ID()), addr, err)
 			cancel()
 			continue
 		}
 		cancel()
-		log.Printf("[%s] connected to %s", n.ID[:6], extractPeerID(addr))
+		log.Printf("[%s] connected to %s", shortID(n.ID()), extractPeerID(addr))
 	}
 }
 
@@ -221,8 +252,17 @@ func (n *Node) Connect(ctx context.Context, multiaddrStr string) error {
 		return fmt.Errorf("decode peer ID: %w", err)
 	}
 
-	info := peer.AddrInfo{ID: pid, Addrs: []multiaddr.Multiaddr{addr}}
-	return n.Host.Connect(ctx, info)
+	cb := n.PeerBreakers.Get(pidStr)
+	if cb.State() == resilience.StateOpen {
+		return fmt.Errorf("circuit open for peer %s: %w", shortID(pidStr), resilience.ErrCircuitOpen)
+	}
+
+	err = n.Host.Connect(ctx, peer.AddrInfo{ID: pid, Addrs: []multiaddr.Multiaddr{addr}})
+	cb.RecordOutcome(err == nil)
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	return nil
 }
 
 // exchangeHello opens a short-lived stream to the given peer, sends our hello
@@ -230,27 +270,27 @@ func (n *Node) Connect(ctx context.Context, multiaddrStr string) error {
 func (n *Node) exchangeHello(ctx context.Context, pid peer.ID) {
 	s, err := n.Host.NewStream(ctx, pid, protocol.ID(ProtocolID))
 	if err != nil {
-		log.Printf("[%s] hello exchange with %s: %v", n.ID[:6], pid.String()[:16], err)
+		log.Printf("[%s] hello exchange with %s: %v", shortID(n.ID()), pid.String()[:16], err)
 		return
 	}
 	defer s.Close()
 
 	// Send hello with all our listen addresses
 	hello := HelloMsg{
-		Type:     "hello",
-		ID:       n.ID,
-		Credits:  n.Ledger.GetCredits(n.ID),
+		Type:       "hello",
+		ID:         n.ID(),
+		Credits:    n.Ledger.GetCredits(n.ID()),
 		Multiaddrs: n.allAddrsForPeer(pid),
 	}
 	if err := json.NewEncoder(s).Encode(hello); err != nil {
-		log.Printf("[%s] hello send: %v", n.ID[:6], err)
+		log.Printf("[%s] hello send: %v", shortID(n.ID()), err)
 		return
 	}
 
 	// Read their hello and add their addresses to our peerstore
 	var remote HelloMsg
 	if err := json.NewDecoder(s).Decode(&remote); err != nil {
-		log.Printf("[%s] hello recv: %v", n.ID[:6], err)
+		log.Printf("[%s] hello recv: %v", shortID(n.ID()), err)
 		return
 	}
 
@@ -262,7 +302,7 @@ func (n *Node) exchangeHello(ctx context.Context, pid peer.ID) {
 		n.Host.Peerstore().AddAddrs(pid, remoteInfo.Addrs, 24*time.Hour)
 	}
 
-	log.Printf("[%s] hello exchanged with %s (%d addrs)", n.ID[:6], pid.String()[:16], len(remote.Multiaddrs))
+	log.Printf("[%s] hello exchanged with %s (%d addrs)", shortID(n.ID()), pid.String()[:16], len(remote.Multiaddrs))
 }
 
 // allAddrsForPeer returns our listen addrs with the peer's ID appended.
@@ -278,9 +318,9 @@ func (n *Node) allAddrsForPeer(pid peer.ID) []multiaddr.Multiaddr {
 // ── Protocol Messages ────────────────────────────────────────────────────────
 
 type HelloMsg struct {
-	Type      string              `json:"type"`
-	ID        string              `json:"id"`
-	Credits   int                 `json:"credits"`
+	Type       string                `json:"type"`
+	ID         string                `json:"id"`
+	Credits    int                   `json:"credits"`
 	Multiaddrs []multiaddr.Multiaddr `json:"multiaddrs,omitempty"`
 }
 
@@ -289,7 +329,7 @@ type Task struct {
 	ID          string          `json:"id"`
 	Code        string          `json:"code,omitempty"`
 	Lang        string          `json:"lang,omitempty"`
-	Params      json.RawMessage `json:"params,omitempty"`  // chunk params, routing hints, etc.
+	Params      json.RawMessage `json:"params,omitempty"` // chunk params, routing hints, etc.
 	TimeoutSec  int             `json:"timeout_sec"`
 	Credits     int             `json:"credits"`
 	State       string          `json:"state"`
@@ -315,12 +355,12 @@ func (n *Node) handleStream(s network.Stream) {
 	// Decode into a generic map first to determine message type
 	var raw map[string]interface{}
 	if err := json.NewDecoder(s).Decode(&raw); err != nil {
-		log.Printf("[%s] stream decode: %v", n.ID[:6], err)
+		log.Printf("[%s] stream decode: %v", shortID(n.ID()), err)
 		return
 	}
 
 	msgType, _ := raw["type"].(string)
-		switch msgType {
+	switch msgType {
 	case "hello":
 		b, _ := json.Marshal(raw)
 		var h HelloMsg
@@ -336,7 +376,7 @@ func (n *Node) handleStream(s network.Stream) {
 		}
 
 	default:
-		log.Printf("[%s] unknown msg type: %s", n.ID[:6], msgType)
+		log.Printf("[%s] unknown msg type: %s", shortID(n.ID()), msgType)
 	}
 }
 
@@ -350,8 +390,8 @@ func (n *Node) onHello(s network.Stream, hello *HelloMsg) {
 	// Respond with our hello
 	resp := HelloMsg{
 		Type:       "hello",
-		ID:         n.ID,
-		Credits:    n.Ledger.GetCredits(n.ID),
+		ID:         n.ID(),
+		Credits:    n.Ledger.GetCredits(n.ID()),
 		Multiaddrs: n.Host.Addrs(),
 	}
 	json.NewEncoder(s).Encode(resp)
@@ -365,7 +405,7 @@ func decodeTaskFromStream(s network.Stream) (Task, error) {
 }
 
 func (n *Node) handleTaskRequest(s network.Stream, task *Task) {
-	if n.Ledger.GetCredits(n.ID) < task.Credits {
+	if n.Ledger.GetCredits(n.ID()) < task.Credits {
 		json.NewEncoder(s).Encode(map[string]string{
 			"type": "task_resp", "id": task.ID, "error": "insufficient credits",
 		})
@@ -373,17 +413,17 @@ func (n *Node) handleTaskRequest(s network.Stream, task *Task) {
 	}
 
 	// Execute task
-		result, err := n.executeTask(task)
-		
+	result, err := n.executeTask(task)
+
 	// Reward executor (submitter already deducted from itself)
-	n.Ledger.AddCredits(n.ID, task.Credits)
+	n.Ledger.AddCredits(n.ID(), task.Credits)
 
 	if err != nil {
 		resp := &TaskResult{ID: task.ID, Success: false, Error: err.Error()}
 		json.NewEncoder(s).Encode(map[string]interface{}{"type": "task_resp", "result": resp})
 	} else {
 		resp := &TaskResult{ID: task.ID, Success: true, Result: result}
-				json.NewEncoder(s).Encode(map[string]interface{}{"type": "task_resp", "result": resp})
+		json.NewEncoder(s).Encode(map[string]interface{}{"type": "task_resp", "result": resp})
 	}
 	// Close write side so submitter's goroutine gets EOF after reading result
 	s.CloseWrite()
@@ -405,6 +445,11 @@ func (n *Node) handleTaskResult(result *TaskResult) {
 // Opens a stream, sends the task, reads response concurrently (goroutine),
 // so write and read can happen simultaneously without deadlock.
 func (n *Node) SubmitTask(ctx context.Context, peerID string, task *Task) error {
+	cb := n.PeerBreakers.Get(peerID)
+	if cb.State() == resilience.StateOpen {
+		return fmt.Errorf("circuit open for peer %s: %w", shortID(peerID), resilience.ErrCircuitOpen)
+	}
+
 	pid, err := peer.Decode(peerID)
 	if err != nil {
 		return fmt.Errorf("decode peer: %w", err)
@@ -412,27 +457,25 @@ func (n *Node) SubmitTask(ctx context.Context, peerID string, task *Task) error 
 
 	s, err := n.Host.NewStream(ctx, pid, protocol.ID(ProtocolID))
 	if err != nil {
+		cb.RecordOutcome(false)
 		return fmt.Errorf("open stream: %w", err)
 	}
 	defer s.Close()
 
-	// Deduct credits locally first (submitter pays)
-	n.Ledger.AddCredits(n.ID, -task.Credits)
+	n.Ledger.AddCredits(n.ID(), -task.Credits)
 
-	// Send task request
 	if err := json.NewEncoder(s).Encode(map[string]interface{}{
 		"type": "task_req",
 		"task": task,
 	}); err != nil {
-		// Refund on send failure
-		n.Ledger.AddCredits(n.ID, task.Credits)
+		n.Ledger.AddCredits(n.ID(), task.Credits)
+		cb.RecordOutcome(false)
 		return fmt.Errorf("send task: %w", err)
 	}
-	s.CloseWrite() // executor now sees EOF on its read side
+	s.CloseWrite()
 
-	// Read result in a goroutine so write/read happen simultaneously
 	type respMsg struct {
-		Type   string       `json:"type"`
+		Type   string      `json:"type"`
 		Result *TaskResult `json:"result,omitempty"`
 	}
 	resultCh := make(chan respMsg, 1)
@@ -445,10 +488,10 @@ func (n *Node) SubmitTask(ctx context.Context, peerID string, task *Task) error 
 		resultCh <- resp
 	}()
 
-	// Wait for result or timeout
 	select {
 	case resp := <-resultCh:
 		if resp.Type == "error" {
+			cb.RecordOutcome(false)
 			return fmt.Errorf("read result: decoder error")
 		}
 		if resp.Result != nil {
@@ -456,12 +499,15 @@ func (n *Node) SubmitTask(ctx context.Context, peerID string, task *Task) error 
 			task.Error = resp.Result.Error
 			if resp.Result.Success {
 				task.State = "completed"
+				cb.RecordOutcome(true)
 			} else {
 				task.State = "failed"
+				cb.RecordOutcome(false)
 			}
 		}
 		return nil
 	case <-ctx.Done():
+		cb.RecordOutcome(false)
 		return ctx.Err()
 	}
 }
@@ -558,15 +604,13 @@ func runScript(ctx context.Context, script string) (json.RawMessage, error) {
 	return json.RawMessage(out), nil
 }
 
-
-
 // runChunkedPython executes a chunk of work based on Params.
 // Params format: {"type":"range","start":N,"end":M} or {"type":"map","data":[...]}
 func (n *Node) runChunkedPython(ctx context.Context, task *Task) (json.RawMessage, error) {
 	var params struct {
-		Type  string `json:"type"`
-		Start int    `json:"start"`
-		End   int    `json:"end"`
+		Type  string        `json:"type"`
+		Start int           `json:"start"`
+		End   int           `json:"end"`
 		Data  []interface{} `json:"data"`
 	}
 	if err := json.Unmarshal(task.Params, &params); err != nil {
@@ -649,4 +693,12 @@ func extractPeerID(addr string) string {
 		return rest
 	}
 	return addr
+}
+
+// shortID returns the first 6 characters of a peer ID for logging.
+func shortID(id string) string {
+	if len(id) < 6 {
+		return id
+	}
+	return id[:6]
 }

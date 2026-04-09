@@ -1,6 +1,7 @@
 package resilience
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -133,6 +134,10 @@ func (cb *CircuitBreaker) recordResult(success bool) {
 	} else {
 		cb.onFailure()
 	}
+}
+
+func (cb *CircuitBreaker) RecordOutcome(success bool) {
+	cb.recordResult(success)
 }
 
 func (cb *CircuitBreaker) onSuccess() {
@@ -292,6 +297,10 @@ func DefaultRetryConfig() RetryConfig {
 }
 
 func Retry(config RetryConfig, fn func() error) error {
+	return RetryWithContext(context.Background(), config, fn)
+}
+
+func RetryWithContext(ctx context.Context, config RetryConfig, fn func() error) error {
 	var lastErr error
 	delay := config.InitialDelay
 
@@ -308,7 +317,11 @@ func Retry(config RetryConfig, fn func() error) error {
 		}
 
 		if attempt < config.MaxAttempts-1 {
-			time.Sleep(delay)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			delay = time.Duration(float64(delay) * config.Multiplier)
 			if delay > config.MaxDelay {
 				delay = config.MaxDelay

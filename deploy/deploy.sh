@@ -2,6 +2,10 @@
 # OpenPool Deployment Script
 # Run this script as root on your VPS
 # Usage: bash deploy.sh
+#
+# This script deploys the integrated binary (cmd/integrated)
+# with CGO_ENABLED=1 (required for go-sqlite3).
+# No GPU support — go-nvml gracefully falls back to CPU mode.
 
 set -e
 
@@ -50,22 +54,25 @@ ufw status
 # ========================================
 # PHASE 2: Install Go
 # ========================================
-log_info "Phase 2: Installing Go 1.24..."
+log_info "Phase 2: Installing Go 1.25..."
+
+export PATH=$PATH:/usr/local/go/bin
 
 if command -v go &> /dev/null; then
-    log_info "Go already installed: $(go version)"
+    GO_VERSION=$(go version | awk '{print $3}')
+    log_info "Go already installed: $GO_VERSION"
 else
     cd /tmp
-    wget -q https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
+    wget -q https://go.dev/dl/go1.25.7.linux-amd64.tar.gz
     rm -rf /usr/local/go
-    tar -C /usr/local -xzf go1.24.2.linux-amd64.tar.gz
-    rm go1.24.2.linux-amd64.tar.gz
-    
+    tar -C /usr/local -xzf go1.25.7.linux-amd64.tar.gz
+    rm go1.25.7.linux-amd64.tar.gz
+
     if ! grep -q '/usr/local/go/bin' /root/.bashrc; then
         echo 'export PATH=$PATH:/usr/local/go/bin' >> /root/.bashrc
     fi
     export PATH=$PATH:/usr/local/go/bin
-    
+
     log_info "Go installed: $(go version)"
 fi
 
@@ -98,13 +105,14 @@ fi
 log_info "Phase 5: Building OpenPool..."
 
 export PATH=$PATH:/usr/local/go/bin
+export CGO_ENABLED=1
 cd /opt/openpool
 
 log_info "Downloading Go modules..."
 go mod download
 
-log_info "Building binary..."
-go build -o openpool ./cmd/node2
+log_info "Building binary (CGO_ENABLED=1, cmd/integrated)..."
+go build -o openpool ./cmd/integrated
 
 log_info "Build complete: $(ls -lh openpool)"
 
@@ -124,14 +132,15 @@ Type=simple
 User=root
 WorkingDirectory=/opt/openpool
 Environment="PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="CGO_ENABLED=1"
 ExecStart=/opt/openpool/openpool \
   -http 8080 \
   -port 9000 \
-  -market \
-  -dht \
-  -wasm /opt/openpool/wasm/sandbox.wasm \
-  -ledger /opt/openpool/data/openpool.db \
-  -peerstore /opt/openpool/data/peerstore.json
+  -db /opt/openpool/data/openpool.db \
+  -auth-db /opt/openpool/data/openpool_auth.db \
+  -peerstore /opt/openpool/data/peerstore.json \
+  -wasm /opt/openpool/wasm \
+  -dht
 Restart=always
 RestartSec=10
 StandardOutput=append:/opt/openpool/logs/openpool.log
@@ -274,7 +283,7 @@ log_info "Phase 10: Verification..."
 sleep 5
 
 log_info "Testing local API..."
-curl -s http://localhost:8080/status | jq . || log_warn "API not responding yet"
+curl -s http://localhost:8080/status | jq . || log_warn "API not responding yet (may need a few seconds)"
 
 log_info ""
 log_info "========================================"
@@ -291,11 +300,14 @@ log_info "  - Journal:  journalctl -u openpool -f"
 log_info ""
 log_info "API Endpoints:"
 log_info "  - Local:  http://localhost:8080/status"
-log_info "  - Public: http://195.35.22.4:8080/status"
-log_info "  - Domain: https://api.openpool.live/status (after DNS)"
+log_info "  - Public:  http://195.35.22.4:8080/status"
+log_info "  - Domain:  https://api.openpool.live/status (after DNS)"
 log_info ""
 log_info "Next Steps:"
-log_info "  1. Configure DNS on Hostinger (see dns-records.txt)"
-log_info "  2. Run: bash /opt/openpool/setup-ssl.sh (after DNS propagation)"
-log_info "  3. Test: curl https://api.openpool.live/status"
+log_info "  1. Configure DNS on Hostinger (see deploy/dns-records.txt)"
+log_info "  2. Run: bash deploy/setup-ssl.sh (after DNS propagation)"
+log_info "  3. Test:  curl https://api.openpool.live/status"
+log_info ""
+log_info "Health Check (add to crontab):"
+log_info "  */5 * * * * /opt/openpool/deploy/healthcheck.sh"
 log_info ""

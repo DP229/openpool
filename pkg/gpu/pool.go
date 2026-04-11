@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"sync"
 	"sync/atomic"
 
@@ -584,10 +585,13 @@ func (p *Pool) executeFFT(ctx context.Context, input json.RawMessage) (json.RawM
 
 	// Cooley-Tukey iterative FFT
 	for stride := 1; stride < N; stride *= 2 {
-		angle := -3.14159265 / float32(stride)
+		angle := -math.Pi / float64(stride)
 		if in.Inverse {
 			angle = -angle
 		}
+		// Use correct trigonometric twiddle factor from Euler's formula
+		cosA := math.Cos(angle)
+		sinA := math.Sin(angle)
 		wr := float32(1)
 		wi := float32(0)
 		for i := 0; i < stride; i++ {
@@ -600,8 +604,9 @@ func (p *Pool) executeFFT(ctx context.Context, input json.RawMessage) (json.RawM
 				realOut[j] += tReal
 				imagOut[j] += tImag
 			}
-			newWr := wr*float32(0) - wi*angle + wr*float32(1)
-			newWi := wr*angle + wi*float32(1)
+			// Apply correct twiddle factor rotation using cos/sin
+			newWr := wr*float32(cosA) - wi*float32(sinA)
+			newWi := wr*float32(sinA) + wi*float32(cosA)
 			wr = newWr
 			wi = newWi
 		}

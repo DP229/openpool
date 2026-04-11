@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -47,6 +49,7 @@ func NewManager(dbPath string) (*Manager, error) {
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS api_keys (
 			id TEXT PRIMARY KEY,
+			key_prefix TEXT NOT NULL,
 			key TEXT UNIQUE NOT NULL,
 			owner_name TEXT NOT NULL,
 			owner_email TEXT NOT NULL,
@@ -58,7 +61,7 @@ func NewManager(dbPath string) (*Manager, error) {
 			last_used INTEGER,
 			rate_limit INTEGER NOT NULL DEFAULT 100
 		);
-		CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key);
+		CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
 		CREATE INDEX IF NOT EXISTS idx_api_keys_owner ON api_keys(owner_email);
 	`)
 	if err != nil {
@@ -85,6 +88,12 @@ func (m *Manager) GenerateAPIKey(ownerName, ownerEmail string, credits int, scop
 	}
 	key := "op_" + hex.EncodeToString(keyBytes)
 
+	// Store bcrypt hash of the key, return plaintext to caller
+	hashedKey, err := bcrypt.GenerateFromPassword([]byte(key), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+
 	scopesStr := "submit,query"
 	if len(scopes) > 0 {
 		scopesStr = ""
@@ -109,10 +118,15 @@ func (m *Manager) GenerateAPIKey(ownerName, ownerEmail string, credits int, scop
 		RateLimit:  100,
 	}
 
-	_, err := m.db.Exec(`
-		INSERT INTO api_keys (id, key, owner_name, owner_email, credits, created_at, expires_at, scopes, rate_limit)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, apiKey.ID, apiKey.Key, apiKey.OwnerName, apiKey.OwnerEmail, apiKey.Credits,
+	keyPrefix := key
+	if len(keyPrefix) > 8 {
+		keyPrefix = keyPrefix[:8]
+	}
+
+	_, err = m.db.Exec(`
+		INSERT INTO api_keys (id, key_prefix, key, owner_name, owner_email, credits, created_at, expires_at, scopes, rate_limit)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, apiKey.ID, keyPrefix, hashedKey, apiKey.OwnerName, apiKey.OwnerEmail, apiKey.Credits,
 		apiKey.CreatedAt.Unix(), apiKey.ExpiresAt.Unix(), scopesStr, apiKey.RateLimit)
 
 	if err != nil {
@@ -126,56 +140,104 @@ func (m *Manager) Validate(key string) (*APIKey, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var scopesStr string
-	var lastUsed sql.NullInt64
-	var createdAtUnix, expiresAtUnix int64
-	apiKey := &APIKey{}
-
-	err := m.db.QueryRow(`
-		SELECT id, key, owner_name, owner_email, credits, created_at, expires_at, scopes, requests_count, last_used, rate_limit
-		FROM api_keys WHERE key = ?
-	`, key).Scan(
-		&apiKey.ID, &apiKey.Key, &apiKey.OwnerName, &apiKey.OwnerEmail, &apiKey.Credits,
-		&createdAtUnix, &expiresAtUnix, &scopesStr, &apiKey.RequestsCount, &lastUsed, &apiKey.RateLimit,
-	)
-
-	if err == sql.ErrNoRows {
-		return nil, ErrInvalidAPIKey
+	keyPrefix := key
+	if len(keyPrefix) > 8 {
+		keyPrefix = keyPrefix[:8]
 	}
+
+	rows, err := m.db.Query(`
+		SELECT id, key, owner_name, owner_email, credits, created_at, expires_at, scopes, requests_count, last_used, rate_limit
+		FROM api_keys WHERE key_prefix = ?
+	`, keyPrefix)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
-	apiKey.CreatedAt = time.Unix(createdAtUnix, 0)
-	apiKey.ExpiresAt = time.Unix(expiresAtUnix, 0)
+	for rows.Next() {
+		apiKey := &APIKey{}
+		var hashedKey string
+		var scopesStr string
+		var lastUsed sql.NullInt64
+		var createdAtUnix, expiresAtUnix int64
 
-	if time.Now().After(apiKey.ExpiresAt) {
-		return nil, ErrExpiredAPIKey
-	}
+		err := rows.Scan(
+			&apiKey.ID, &hashedKey, &apiKey.OwnerName, &apiKey.OwnerEmail, &apiKey.Credits,
+			&createdAtUnix, &expiresAtUnix, &scopesStr, &apiKey.RequestsCount, &lastUsed, &apiKey.RateLimit,
+		)
+		if err != nil {
+			continue
+		}
 
-	if scopesStr != "" {
-		apiKey.Scopes = []string{}
-		for _, s := range []string{"submit", "query", "admin"} {
-			if containsScope(scopesStr, s) {
-				apiKey.Scopes = append(apiKey.Scopes, s)
+		if err := bcrypt.CompareHashAndPassword([]byte(hashedKey), []byte(key)); err != nil {
+			continue
+		}
+
+		apiKey.CreatedAt = time.Unix(createdAtUnix, 0)
+		apiKey.ExpiresAt = time.Unix(expiresAtUnix, 0)
+		apiKey.Key = key
+
+		if time.Now().After(apiKey.ExpiresAt) {
+			return nil, ErrExpiredAPIKey
+		}
+
+		if scopesStr != "" {
+			apiKey.Scopes = []string{}
+			for _, s := range []string{"submit", "query", "admin"} {
+				if containsScope(scopesStr, s) {
+					apiKey.Scopes = append(apiKey.Scopes, s)
+				}
 			}
 		}
+
+		if lastUsed.Valid {
+			t := time.Unix(lastUsed.Int64, 0)
+			apiKey.LastUsed = &t
+		}
+
+		return apiKey, nil
 	}
 
-	if lastUsed.Valid {
-		t := time.Unix(lastUsed.Int64, 0)
-		apiKey.LastUsed = &t
+	return nil, ErrInvalidAPIKey
+}
+
+func (m *Manager) findKeyID(key string) (string, error) {
+	keyPrefix := key
+	if len(keyPrefix) > 8 {
+		keyPrefix = keyPrefix[:8]
 	}
 
-	return apiKey, nil
+	rows, err := m.db.Query(`SELECT id, key FROM api_keys WHERE key_prefix = ?`, keyPrefix)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id, hashedKey string
+		if err := rows.Scan(&id, &hashedKey); err != nil {
+			continue
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(hashedKey), []byte(key)); err != nil {
+			continue
+		}
+		return id, nil
+	}
+
+	return "", ErrInvalidAPIKey
 }
 
 func (m *Manager) UseCredits(key string, amount int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	id, err := m.findKeyID(key)
+	if err != nil {
+		return err
+	}
+
 	var currentCredits int
-	err := m.db.QueryRow("SELECT credits FROM api_keys WHERE key = ?", key).Scan(&currentCredits)
+	err = m.db.QueryRow("SELECT credits FROM api_keys WHERE id = ?", id).Scan(&currentCredits)
 	if err != nil {
 		return err
 	}
@@ -187,8 +249,8 @@ func (m *Manager) UseCredits(key string, amount int) error {
 	_, err = m.db.Exec(`
 		UPDATE api_keys 
 		SET credits = credits - ?, requests_count = requests_count + 1, last_used = ?
-		WHERE key = ?
-	`, amount, time.Now().Unix(), key)
+		WHERE id = ?
+	`, amount, time.Now().Unix(), id)
 
 	return err
 }
@@ -197,7 +259,12 @@ func (m *Manager) AddCredits(key string, amount int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	_, err := m.db.Exec("UPDATE api_keys SET credits = credits + ? WHERE key = ?", amount, key)
+	id, err := m.findKeyID(key)
+	if err != nil {
+		return err
+	}
+
+	_, err = m.db.Exec("UPDATE api_keys SET credits = credits + ? WHERE id = ?", amount, id)
 	return err
 }
 
@@ -205,7 +272,7 @@ func (m *Manager) RevokeKey(idOrKey string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	_, err := m.db.Exec("DELETE FROM api_keys WHERE id = ? OR key = ?", idOrKey, idOrKey)
+	_, err := m.db.Exec("DELETE FROM api_keys WHERE id = ?", idOrKey)
 	return err
 }
 
@@ -213,7 +280,7 @@ func (m *Manager) ListKeys(ownerEmail string) ([]*APIKey, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	query := "SELECT id, key, owner_name, owner_email, credits, created_at, expires_at, scopes, requests_count, last_used, rate_limit FROM api_keys"
+	query := "SELECT id, key_prefix, key, owner_name, owner_email, credits, created_at, expires_at, scopes, requests_count, last_used, rate_limit FROM api_keys"
 	args := []interface{}{}
 
 	if ownerEmail != "" {
@@ -229,13 +296,14 @@ func (m *Manager) ListKeys(ownerEmail string) ([]*APIKey, error) {
 
 	var keys []*APIKey
 	for rows.Next() {
+		var keyPrefix, hashedKey string
 		var scopesStr string
 		var lastUsed sql.NullInt64
 		var createdAtUnix, expiresAtUnix int64
 		apiKey := &APIKey{}
 
 		err := rows.Scan(
-			&apiKey.ID, &apiKey.Key, &apiKey.OwnerName, &apiKey.OwnerEmail,
+			&apiKey.ID, &keyPrefix, &hashedKey, &apiKey.OwnerName, &apiKey.OwnerEmail,
 			&apiKey.Credits, &createdAtUnix, &expiresAtUnix, &scopesStr,
 			&apiKey.RequestsCount, &lastUsed, &apiKey.RateLimit,
 		)
@@ -243,6 +311,7 @@ func (m *Manager) ListKeys(ownerEmail string) ([]*APIKey, error) {
 			return nil, err
 		}
 
+		apiKey.Key = keyPrefix + "..."
 		apiKey.CreatedAt = time.Unix(createdAtUnix, 0)
 		apiKey.ExpiresAt = time.Unix(expiresAtUnix, 0)
 

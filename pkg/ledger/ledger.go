@@ -21,6 +21,17 @@ func New(path string) (*Ledger, error) {
 		return nil, err
 	}
 
+	// Enable WAL mode for concurrent read/write safety
+	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// Prevent writer starvation with busy timeout
+	if _, err := db.Exec("PRAGMA busy_timeout=5000;"); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS ledger (
 			node_id TEXT PRIMARY KEY,
@@ -111,18 +122,17 @@ func (l *Ledger) DeductCredits(nodeID string, amount int) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	tx, err := l.db.Begin()
-	if err != nil {
+	if _, err := l.db.Exec("BEGIN IMMEDIATE"); err != nil {
 		return 0, err
 	}
 
 	var balance int
-	err = tx.QueryRow("SELECT credits FROM ledger WHERE node_id = ?", nodeID).Scan(&balance)
+	err := l.db.QueryRow("SELECT credits FROM ledger WHERE node_id = ?", nodeID).Scan(&balance)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			balance = 0
 		} else {
-			tx.Rollback()
+			l.db.Exec("ROLLBACK")
 			return 0, err
 		}
 	}
@@ -133,22 +143,22 @@ func (l *Ledger) DeductCredits(nodeID string, amount int) (int, error) {
 	}
 
 	ts := time.Now().Unix()
-	_, err = tx.Exec(`INSERT INTO ledger (node_id, credits, tasks_failed, updated_at)
+	_, err = l.db.Exec(`INSERT INTO ledger (node_id, credits, tasks_failed, updated_at)
 		VALUES (?, ?, 1, ?) ON CONFLICT(node_id) DO UPDATE SET credits=?, tasks_failed=tasks_failed+1, updated_at=?`,
 		nodeID, balance, ts, balance, ts)
 	if err != nil {
-		tx.Rollback()
+		l.db.Exec("ROLLBACK")
 		return 0, err
 	}
 
-	_, err = tx.Exec("INSERT INTO history (node_id, amount, reason, ts) VALUES (?, ?, ?, ?)",
+	_, err = l.db.Exec("INSERT INTO history (node_id, amount, reason, ts) VALUES (?, ?, ?, ?)",
 		nodeID, -amount, "slash", ts)
 	if err != nil {
-		tx.Rollback()
+		l.db.Exec("ROLLBACK")
 		return 0, err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if _, err := l.db.Exec("COMMIT"); err != nil {
 		return 0, err
 	}
 
@@ -161,40 +171,39 @@ func (l *Ledger) RewardCredits(nodeID string, amount int) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	tx, err := l.db.Begin()
-	if err != nil {
+	if _, err := l.db.Exec("BEGIN IMMEDIATE"); err != nil {
 		return 0, err
 	}
 
 	var balance int
-	err = tx.QueryRow("SELECT credits FROM ledger WHERE node_id = ?", nodeID).Scan(&balance)
+	err := l.db.QueryRow("SELECT credits FROM ledger WHERE node_id = ?", nodeID).Scan(&balance)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			balance = 0
 		} else {
-			tx.Rollback()
+			l.db.Exec("ROLLBACK")
 			return 0, err
 		}
 	}
 
 	balance += amount
 	ts := time.Now().Unix()
-	_, err = tx.Exec(`INSERT INTO ledger (node_id, credits, tasks_completed, updated_at)
+	_, err = l.db.Exec(`INSERT INTO ledger (node_id, credits, tasks_completed, updated_at)
 		VALUES (?, ?, 1, ?) ON CONFLICT(node_id) DO UPDATE SET credits=?, tasks_completed=tasks_completed+1, updated_at=?`,
 		nodeID, balance, ts, balance, ts)
 	if err != nil {
-		tx.Rollback()
+		l.db.Exec("ROLLBACK")
 		return 0, err
 	}
 
-	_, err = tx.Exec("INSERT INTO history (node_id, amount, reason, ts) VALUES (?, ?, ?, ?)",
+	_, err = l.db.Exec("INSERT INTO history (node_id, amount, reason, ts) VALUES (?, ?, ?, ?)",
 		nodeID, amount, "reward", ts)
 	if err != nil {
-		tx.Rollback()
+		l.db.Exec("ROLLBACK")
 		return 0, err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if _, err := l.db.Exec("COMMIT"); err != nil {
 		return 0, err
 	}
 

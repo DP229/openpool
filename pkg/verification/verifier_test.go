@@ -116,7 +116,7 @@ func TestVerifyResult(t *testing.T) {
 		{"same", `{"result":42}`, `{"result":42}`, true},
 		{"different", `{"result":42}`, `{"result":43}`, false},
 		{"empty", `{}`, `{}`, true},
-		{"order matters", `{"a":1,"b":2}`, `{"b":2,"a":1}`, false},
+		{"order_matters", `{"a":1,"b":2}`, `{"b":2,"a":1}`, true},
 	}
 
 	for _, tt := range tests {

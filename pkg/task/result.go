@@ -18,14 +18,14 @@ type Result struct {
 
 // Metrics contains performance and quality data about the task execution
 type Metrics struct {
-	LatencyMs    int     `json:"latency_ms"`
-	CostCredits  int     `json:"cost_credits"`
-	Score        float64 `json:"score,omitempty"`   // 0.0-1.0 for optimization
-	Steps        []Step  `json:"steps,omitempty"`   // Like ATIF trajectory
-	TokensUsed   int     `json:"tokens_used,omitempty"`
-	CacheHits    int     `json:"cache_hits,omitempty"`
-	GPUUsed      bool    `json:"gpu_used"`
-	Instances    int     `json:"instances,omitempty"` // For batch/distributed tasks
+	LatencyMs   int     `json:"latency_ms"`
+	CostCredits int     `json:"cost_credits"`
+	Score       float64 `json:"score,omitempty"` // 0.0-1.0 for optimization
+	Steps       []Step  `json:"steps,omitempty"` // Like ATIF trajectory
+	TokensUsed  int     `json:"tokens_used,omitempty"`
+	CacheHits   int     `json:"cache_hits,omitempty"`
+	GPUUsed     bool    `json:"gpu_used"`
+	Instances   int     `json:"instances,omitempty"` // For batch/distributed tasks
 }
 
 // Step represents a single step in task execution (for trajectory/audit)

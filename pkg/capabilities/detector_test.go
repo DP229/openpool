@@ -43,7 +43,7 @@ func TestCPUInfo(t *testing.T) {
 func TestMemoryInfo(t *testing.T) {
 	info, _ := Detect()
 
-	t.Logf("Memory: Total=%.2f GB, Available=%.2f GB", 
+	t.Logf("Memory: Total=%.2f GB, Available=%.2f GB",
 		info.Memory.TotalGB, info.Memory.AvailableGB)
 }
 

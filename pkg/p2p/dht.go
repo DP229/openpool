@@ -140,6 +140,10 @@ func (n *Node) DiscoverWorkers(ctx context.Context, cap CapabilityNamespace, lim
 			continue
 		}
 
+		// Tag as WAN for scheduler prioritization (lower priority than LAN)
+		n.Host.Peerstore().Put(info.ID, "latency_pref", "high")
+		n.Host.Peerstore().Put(info.ID, "network_type", "WAN")
+
 		if err := n.verifyPeer(ctx, info.ID); err != nil {
 			log.Printf("[%s] verify peer %s: %v — skipping", shortID(n.ID()), shortID(info.ID.String()), err)
 			continue

@@ -59,14 +59,19 @@ func (rl *RateLimiter) Allow(clientID string) bool {
 	elapsed := now.Sub(client.lastSeen)
 
 	tokensToAdd := int(elapsed.Seconds() * float64(rl.rate) / rl.window.Seconds())
-	client.tokens += tokensToAdd
-	if client.tokens > rl.burst {
-		client.tokens = rl.burst
+	if tokensToAdd > 0 {
+		client.tokens += tokensToAdd
+		if client.tokens > rl.burst {
+			client.tokens = rl.burst
+		}
+		client.lastSeen = now
 	}
-	client.lastSeen = now
 
 	if client.tokens > 0 {
 		client.tokens--
+		if tokensToAdd == 0 {
+			client.lastSeen = now
+		}
 		return true
 	}
 

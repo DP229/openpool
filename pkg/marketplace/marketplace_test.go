@@ -301,10 +301,10 @@ func TestUpdateNodeStatus(t *testing.T) {
 
 func TestNodeCapabilities(t *testing.T) {
 	caps := NodeCapabilities{
-		CPUCores:       8,
-		CPUArch:        "x86_64",
-		RAMGB:          32,
-		WASMEnabled:    true,
+		CPUCores:        8,
+		CPUArch:         "x86_64",
+		RAMGB:           32,
+		WASMEnabled:     true,
 		DockerAvailable: true,
 		GPU: &GPU{
 			Present:     true,

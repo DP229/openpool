@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -198,10 +199,79 @@ func (v *Verifier) GetNodeScore(nodeID string) (float64, int, int, error) {
 	return score, matchCount, int(total.Int64), nil
 }
 
-// VerifyResult compares two results for consistency.
+// FloatTolerance for CFD/scientific workloads (relative error)
+const FloatTolerance = 1e-5
+
+// VerifyResult compares two results for consistency using relative error tolerance.
+// SHA-256 hashing is deprecated for floating-point outputs due to non-determinism
+// across different CPU/GPU architectures.
 func VerifyResult(a, b json.RawMessage) bool {
-	// Simple comparison: hash both and compare
-	return HashOutput(a) == HashOutput(b)
+	var valA, valB interface{}
+	if err := json.Unmarshal(a, &valA); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &valB); err != nil {
+		return false
+	}
+	return compareRecursive(valA, valB, FloatTolerance)
+}
+
+// compareRecursive traverses JSON structures and applies relative error tolerance to floats.
+func compareRecursive(a, b interface{}, epsilon float64) bool {
+	switch vA := a.(type) {
+	case map[string]interface{}:
+		vB, ok := b.(map[string]interface{})
+		if !ok || len(vA) != len(vB) {
+			return false
+		}
+		for k, valA := range vA {
+			valB, exists := vB[k]
+			if !exists || !compareRecursive(valA, valB, epsilon) {
+				return false
+			}
+		}
+		return true
+
+	case []interface{}:
+		vB, ok := b.([]interface{})
+		if !ok || len(vA) != len(vB) {
+			return false
+		}
+		for i := range vA {
+			if !compareRecursive(vA[i], vB[i], epsilon) {
+				return false
+			}
+		}
+		return true
+
+	case float64:
+		vB, ok := b.(float64)
+		if !ok {
+			return false
+		}
+		return isApproxEqual(vA, vB, epsilon)
+
+	default:
+		// Strict equality for strings, bools, ints, null
+		return a == b
+	}
+}
+
+// isApproxEqual implements relative error: |a-b| / max(|a|, |b|) < epsilon
+func isApproxEqual(a, b, epsilon float64) bool {
+	if a == b {
+		return true
+	}
+	absA := math.Abs(a)
+	absB := math.Abs(b)
+	diff := math.Abs(a - b)
+
+	maxVal := math.Max(absA, absB)
+	if maxVal == 0 {
+		return diff == 0
+	}
+
+	return (diff / maxVal) < epsilon
 }
 
 // ShouldVerify returns true if a task should be verified.

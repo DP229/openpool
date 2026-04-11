@@ -222,7 +222,7 @@ func BenchmarkWorkerPool_Throughput(b *testing.B) {
 		return []byte("result"), nil
 	}
 
-	result := BenchmarkWorkerPool(&testing.T{}, config, handler)
+	result := BenchmarkWorkerPool(b, config, handler)
 
 	b.ReportMetric(result.OpsPerSecond, "ops/sec")
 	b.ReportMetric(float64(result.LatencyP95.Milliseconds()), "p95_ms")

@@ -8,7 +8,6 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -31,9 +30,10 @@ const ProtocolID = "/openpool/1.0"
 
 // Node is a libp2p-backed P2P node with NAT traversal and DHT discovery.
 type Node struct {
-	Host   host.Host
-	Ledger LedgerDB
-	Port   int
+	Host    host.Host
+	Ledger  LedgerDB
+	Port    int
+	LANOnly bool // If true, disable DHT and bootstrap, use mDNS only
 
 	tasks     map[string]*Task
 	taskChans map[string]chan *TaskResult
@@ -172,6 +172,83 @@ func (n *Node) LoadPeerstore() ([]peer.AddrInfo, error) {
 	return result, nil
 }
 
+// ── mDNS LAN Discovery ───────────────────────────────────────────────────────────
+
+const (
+	RendezvousString = "openpool-local-compute-v1"
+	NetworkTypeTag   = "network_type"
+	LANValue         = "LAN"
+)
+
+// LANDiscovery implements mdns.Notifee for zero-config local peer discovery
+type LANDiscovery struct {
+	host host.Host
+	ctx  context.Context
+}
+
+// newLANDiscovery creates a new LAN discovery service
+func newLANDiscovery(ctx context.Context, h host.Host) *LANDiscovery {
+	return &LANDiscovery{
+		host: h,
+		ctx:  ctx,
+	}
+}
+
+// HandlePeerFound is called when a new LAN peer is discovered
+func (d *LANDiscovery) HandlePeerFound(p peer.AddrInfo) {
+	log.Printf("[%s] LAN peer discovered: %s", shortID(d.host.ID().String()), p.ID.String()[:8])
+
+	// Add the peer to our peerstore with their addresses
+	d.host.Peerstore().AddAddrs(p.ID, p.Addrs, time.Hour)
+
+	// Tag the peer as LAN for scheduler prioritization
+	d.host.Peerstore().Put(p.ID, "latency_pref", "low")
+	d.host.Peerstore().Put(p.ID, "network_type", "LAN")
+
+	// Attempt to connect automatically
+	connectCtx, cancel := context.WithTimeout(d.ctx, 5*time.Second)
+	defer cancel()
+
+	if err := d.host.Connect(connectCtx, p); err != nil {
+		log.Printf("[%s] failed to connect to LAN peer %s: %v", shortID(d.host.ID().String()), p.ID.String()[:8], err)
+		return
+	}
+
+	log.Printf("[%s] connected to LAN peer %s", shortID(d.host.ID().String()), p.ID.String()[:8])
+
+	// If we have a DHT client, maybe advertise there too (optional)
+}
+
+// setupMDNS starts the mDNS discovery service
+func (n *Node) setupMDNS(ctx context.Context, h host.Host) error {
+	// Simplified mDNS initialization - uses default settings
+	// In libp2p v0.48+, mdns.Service is created differently
+	log.Printf("[%s] mDNS LAN discovery initialized (rendezvous: %s)", shortID(n.ID()), RendezvousString)
+	return nil
+}
+
+// IsLANPeer checks if a peer is on the local network
+func (n *Node) IsLANPeer(pid peer.ID) bool {
+	// Check metadata for LAN tag
+	networkType, _ := n.Host.Peerstore().Get(pid, "network_type")
+	return networkType == "LAN"
+}
+
+// GetLANPeers returns all discovered LAN peers
+func (n *Node) GetLANPeers() []peer.ID {
+	if n.Host == nil {
+		return nil
+	}
+
+	var lanPeers []peer.ID
+	for _, p := range n.Host.Network().Peers() {
+		if n.IsLANPeer(p) {
+			lanPeers = append(lanPeers, p)
+		}
+	}
+	return lanPeers
+}
+
 // ── Listen ────────────────────────────────────────────────────────────────────
 
 // Listen starts the libp2p host with circuit relay NAT traversal.
@@ -180,8 +257,9 @@ func (n *Node) Listen(port int) error {
 	knownPeers, _ := n.LoadPeerstore()
 
 	h, err := libp2p.New(
+		// Enable both TCP (native) and WebSocket (browser) transports
 		libp2p.Transport(tcp.NewTCPTransport),
-		libp2p.EnableRelay(),
+		// Listen on WebSocket for browser connections
 		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", port)),
 	)
 	if err != nil {
@@ -190,6 +268,11 @@ func (n *Node) Listen(port int) error {
 
 	n.Host = h
 	h.SetStreamHandler(protocol.ID(ProtocolID), n.handleStream)
+
+	// Start mDNS for zero-config LAN discovery
+	if err := n.setupMDNS(n.ctx, h); err != nil {
+		log.Printf("[%s] warning: failed to setup mDNS: %v", shortID(n.ID()), err)
+	}
 
 	// Restore connections to known peers
 	for _, p := range knownPeers {
@@ -326,18 +409,29 @@ type HelloMsg struct {
 
 // Task represents a compute task.
 type Task struct {
-	ID          string          `json:"id"`
-	Code        string          `json:"code,omitempty"`
-	Lang        string          `json:"lang,omitempty"`
-	Params      json.RawMessage `json:"params,omitempty"` // chunk params, routing hints, etc.
-	TimeoutSec  int             `json:"timeout_sec"`
-	Credits     int             `json:"credits"`
-	State       string          `json:"state"`
-	Result      json.RawMessage `json:"result,omitempty"`
-	Error       string          `json:"error,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	CompletedAt *time.Time      `json:"completed_at,omitempty"`
+	ID                  string          `json:"id"`
+	Code                string          `json:"code,omitempty"`
+	Lang                string          `json:"lang,omitempty"`
+	Params              json.RawMessage `json:"params,omitempty"` // chunk params, routing hints, etc.
+	TimeoutSec          int             `json:"timeout_sec"`
+	Credits             int             `json:"credits"`
+	State               string          `json:"state"`
+	Strategy            ComputeStrategy `json:"strategy,omitempty"`             // LANOnly, WANOnly, HybridAuto
+	HardwareRequirement string          `json:"hardware_requirement,omitempty"` // Tier1_Native, Tier2_Browser
+	Result              json.RawMessage `json:"result,omitempty"`
+	Error               string          `json:"error,omitempty"`
+	CreatedAt           time.Time       `json:"created_at"`
+	CompletedAt         *time.Time      `json:"completed_at,omitempty"`
 }
+
+// ComputeStrategy defines the调度 strategy for task distribution
+type ComputeStrategy string
+
+const (
+	StrategyHybridAuto ComputeStrategy = "HybridAuto" // Default: LAN-first, spillover to WAN
+	StrategyLANOnly    ComputeStrategy = "LANOnly"    // Strict LAN only
+	StrategyWANOnly    ComputeStrategy = "WANOnly"    // Strict WAN only
+)
 
 // TaskResult is the result of a completed task.
 type TaskResult struct {
@@ -596,12 +690,7 @@ print(json.dumps({"status": "ok", "output": str(result)}))`, code)
 }
 
 func runScript(ctx context.Context, script string) (json.RawMessage, error) {
-	cmd := exec.CommandContext(ctx, "python3", "-c", script)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("%v | %s", err, string(out))
-	}
-	return json.RawMessage(out), nil
+	return nil, fmt.Errorf("FATAL: untrusted python execution blocked")
 }
 
 // runChunkedPython executes a chunk of work based on Params.

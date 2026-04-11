@@ -10,6 +10,7 @@ import (
 
 	"github.com/dp229/openpool/pkg/p2p"
 	"github.com/dp229/openpool/pkg/resilience"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 // ── Configuration ─────────────────────────────────────────────────────────────────
@@ -225,12 +226,75 @@ func (s *Scheduler) SubmitChunked(ctx context.Context, task *p2p.Task, mr MapRed
 	if len(peers) == 0 {
 		return nil, fmt.Errorf("no peers available")
 	}
-	log.Printf("[%s] Found %d peers for %d chunks", s.nodeID[:6], len(peers), len(chunks))
+
+	localPeers, globalPeers := s.getLANFirstPeers(peers)
+
+	// Hardware-aware filtering: Prevent Tier1_Native tasks from running on browser peers
+	hwReq := task.HardwareRequirement
+	if hwReq == "Tier1_Native" {
+		// Filter out browser peers
+		var nativeLocal, nativeGlobal []string
+		for _, p := range localPeers {
+			if !s.isBrowserPeer(p) {
+				nativeLocal = append(nativeLocal, p)
+			}
+		}
+		for _, p := range globalPeers {
+			if !s.isBrowserPeer(p) {
+				nativeGlobal = append(nativeGlobal, p)
+			}
+		}
+		localPeers = nativeLocal
+		globalPeers = nativeGlobal
+		log.Printf("[%s] Hardware filter: removed browser peers for Tier1_Native task", s.nodeID[:6])
+	}
+
+	if len(localPeers) == 0 && len(globalPeers) == 0 {
+		return nil, fmt.Errorf("no compatible peers available for hardware requirement: %s", hwReq)
+	}
+
+	strategy := task.Strategy
+	if strategy == "" {
+		strategy = p2p.StrategyHybridAuto
+	}
+
+	log.Printf("[%s] Scheduling %d chunks with %s (local:%d global:%d)",
+		s.nodeID[:6], len(chunks), strategy, len(localPeers), len(globalPeers))
 
 	resultCh := make(chan ChunkResult, len(chunks))
 
 	for i, chunk := range chunks {
-		peerID := peers[i%len(peers)]
+		var peerID string
+		var pool string
+
+		switch strategy {
+		case p2p.StrategyLANOnly:
+			if len(localPeers) == 0 {
+				return nil, fmt.Errorf("LANOnly: no local peers")
+			}
+			peerID = localPeers[i%len(localPeers)]
+			pool = "LAN"
+		case p2p.StrategyWANOnly:
+			if len(globalPeers) == 0 {
+				return nil, fmt.Errorf("WANOnly: no global peers")
+			}
+			peerID = globalPeers[i%len(globalPeers)]
+			pool = "WAN"
+		default: // HybridAuto
+			if i < len(localPeers) && len(localPeers) > 0 {
+				peerID = localPeers[i%len(localPeers)]
+				pool = "LAN"
+			} else if len(globalPeers) > 0 {
+				peerID = globalPeers[(i-len(localPeers))%len(globalPeers)]
+				pool = "WAN"
+			} else {
+				peerID = localPeers[i%len(localPeers)]
+				pool = "LAN"
+			}
+		}
+
+		log.Printf("[%s] Chunk %d -> %s", s.nodeID[:6], i, pool)
+
 		chunkTask := &p2p.Task{
 			ID:         chunk.ID,
 			Code:       task.Code,
@@ -238,6 +302,7 @@ func (s *Scheduler) SubmitChunked(ctx context.Context, task *p2p.Task, mr MapRed
 			Params:     chunk.Params,
 			TimeoutSec: chunk.Timeout,
 			Credits:    chunk.Credits,
+			Strategy:   strategy,
 			State:      "pending",
 			CreatedAt:  time.Now(),
 		}
@@ -435,6 +500,38 @@ func (s *Scheduler) filterHealthyPeers(peers []string) []string {
 		}
 	}
 	return healthy
+}
+
+// getLANFirstPeers partitions peers into local (LAN) and global (WAN) pools
+func (s *Scheduler) getLANFirstPeers(peers []string) (local, remote []string) {
+	if s.node.Host == nil {
+		return nil, peers
+	}
+
+	for _, pidStr := range peers {
+		pid, err := peer.Decode(pidStr)
+		if err != nil {
+			continue
+		}
+		if s.node.IsLANPeer(pid) {
+			local = append(local, pidStr)
+		} else {
+			remote = append(remote, pidStr)
+		}
+	}
+
+	log.Printf("[%s] peer tiering: %d local, %d remote", s.nodeID[:6], len(local), len(remote))
+	return local, remote
+}
+
+// isBrowserPeer checks if a peer is tagged as a browser node
+func (s *Scheduler) isBrowserPeer(pidStr string) bool {
+	pid, err := peer.Decode(pidStr)
+	if err != nil {
+		return false
+	}
+	clientType, _ := s.node.Host.Peerstore().Get(pid, "client_type")
+	return clientType == "browser"
 }
 
 func countSuccess(results []ChunkResult) int {

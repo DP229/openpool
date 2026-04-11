@@ -7,9 +7,9 @@ import (
 
 // TaskMetrics tracks performance metrics for a task type
 type TaskMetrics struct {
-	Type          string    `json:"type"`
-	Count         int       `json:"count"`
-	SuccessCount  int       `json:"success_count"`
+	Type         string    `json:"type"`
+	Count        int       `json:"count"`
+	SuccessCount int       `json:"success_count"`
 	FailCount    int       `json:"fail_count"`
 	TotalLatency int       `json:"total_latency_ms"` // ms
 	AvgLatency   int       `json:"avg_latency_ms"`
@@ -26,7 +26,7 @@ type NodeStats struct {
 	FailCount      int       `json:"fail_count"`
 	TotalLatency   int       `json:"total_latency_ms"`
 	AvgLatency     int       `json:"avg_latency_ms"`
-	AvgScore       float64   `json:"avg_score"`      // 0.0 - 1.0
+	AvgScore       float64   `json:"avg_score"` // 0.0 - 1.0
 	LastSeen       time.Time `json:"last_seen"`
 	GPUCapable     bool      `json:"gpu_capable"`
 	CPUCores       int       `json:"cpu_cores"`

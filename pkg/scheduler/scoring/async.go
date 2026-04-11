@@ -14,14 +14,14 @@ type AsyncResult struct {
 
 // ResultWrapper wraps task results with metadata
 type ResultWrapper struct {
-	TaskID    string
-	NodeID   string
-	Output   []byte
-	Latency  int
-	Cost     int
-	Score    float64
-	Steps    []Step
-	Success  bool
+	TaskID     string
+	NodeID     string
+	Output     []byte
+	Latency    int
+	Cost       int
+	Score      float64
+	Steps      []Step
+	Success    bool
 	ReceivedAt time.Time
 }
 
@@ -81,14 +81,14 @@ func (p *WorkerPool) worker() {
 func (e *AsyncExecutor) Submit(task func() (interface{}, error)) {
 	go func() {
 		result, err := task()
-		
+
 		var wrapped *ResultWrapper
 		if result != nil {
 			if r, ok := result.(*ResultWrapper); ok {
 				wrapped = r
 			}
 		}
-		
+
 		e.results <- &AsyncResult{
 			Result: wrapped,
 			Err:    err,

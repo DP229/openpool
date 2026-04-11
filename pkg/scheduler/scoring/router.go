@@ -7,7 +7,7 @@ import (
 // TaskRequirements specifies requirements for a task
 type TaskRequirements struct {
 	Type       string `json:"type"`
-	RequireGPU bool  `json:"require_gpu"`
+	RequireGPU bool   `json:"require_gpu"`
 	MinCPU     int    `json:"min_cpu"`
 	MaxLatency int    `json:"max_latency_ms"` // ms
 	MaxCost    int    `json:"max_cost"`
@@ -15,16 +15,16 @@ type TaskRequirements struct {
 
 // NodeCandidate represents a node that can execute a task
 type NodeCandidate struct {
-	NodeID         string  `json:"node_id"`
-	Address        string  `json:"address"`
-	Reliability    float64 `json:"reliability"`    // 0.0 - 1.0
-	AvgLatency     int     `json:"avg_latency_ms"`
-	SuccessRate    float64 `json:"success_rate"`  // 0.0 - 1.0
-	CostPerTask    int     `json:"cost_per_task"`
-	GPUCapable     bool    `json:"gpu_capable"`
-	CPUCores       int     `json:"cpu_cores"`
-	CurrentLoad    int     `json:"current_load"`  // tasks in flight
-	Score          float64 `json:"score"`        // calculated
+	NodeID      string  `json:"node_id"`
+	Address     string  `json:"address"`
+	Reliability float64 `json:"reliability"` // 0.0 - 1.0
+	AvgLatency  int     `json:"avg_latency_ms"`
+	SuccessRate float64 `json:"success_rate"` // 0.0 - 1.0
+	CostPerTask int     `json:"cost_per_task"`
+	GPUCapable  bool    `json:"gpu_capable"`
+	CPUCores    int     `json:"cpu_cores"`
+	CurrentLoad int     `json:"current_load"` // tasks in flight
+	Score       float64 `json:"score"`        // calculated
 }
 
 // Router handles task routing to nodes
@@ -69,7 +69,7 @@ func (r *Router) SelectNodes(req *TaskRequirements, count int) []*NodeCandidate 
 	defer r.mu.RUnlock()
 
 	candidates := r.filterAndScore(req)
-	
+
 	// Sort by score (descending)
 	for i := 0; i < len(candidates)-1; i++ {
 		for j := i + 1; j < len(candidates); j++ {
@@ -125,9 +125,9 @@ func (r *Router) calculateScore(node *NodeCandidate) float64 {
 	// Weights
 	const (
 		ReliabilityWeight = 0.35
-		LatencyWeight    = 0.25
-		CostWeight      = 0.20
-		LoadWeight      = 0.20
+		LatencyWeight     = 0.25
+		CostWeight        = 0.20
+		LoadWeight        = 0.20
 	)
 
 	// Reliability score (0.0 - 1.0)
@@ -209,11 +209,9 @@ func (r *Router) GetStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"total_nodes":    len(r.nodes),
-		"gpu_capable":    gpuCapable,
-		"total_load":     totalLoad,
-		"avg_load":       float64(totalLoad) / float64(max(1, len(r.nodes))),
+		"total_nodes": len(r.nodes),
+		"gpu_capable": gpuCapable,
+		"total_load":  totalLoad,
+		"avg_load":    float64(totalLoad) / float64(max(1, len(r.nodes))),
 	}
 }
-
-

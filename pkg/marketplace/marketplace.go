@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -12,21 +13,21 @@ import (
 
 // NodeCapabilities describes what a node can offer.
 type NodeCapabilities struct {
-	CPUCores     int     `json:"cpu_cores"`
-	CPUArch      string  `json:"cpu_arch"`
-	RAMGB        int     `json:"ram_gb"`
-	GPU          *GPU    `json:"gpu,omitempty"`
-	StorageGB    int     `json:"storage_gb"`
-	WASMEnabled  bool    `json:"wasm_enabled"`
-	DockerAvailable bool `json:"docker_available"`
+	CPUCores        int    `json:"cpu_cores"`
+	CPUArch         string `json:"cpu_arch"`
+	RAMGB           int    `json:"ram_gb"`
+	GPU             *GPU   `json:"gpu,omitempty"`
+	StorageGB       int    `json:"storage_gb"`
+	WASMEnabled     bool   `json:"wasm_enabled"`
+	DockerAvailable bool   `json:"docker_available"`
 }
 
 // GPU describes GPU capabilities.
 type GPU struct {
-	Present      bool   `json:"present"`
-	Model        string `json:"model"`
-	VRAMGB       int    `json:"vram_gb"`
-	CUDAVersion  string `json:"cuda_version,omitempty"`
+	Present     bool   `json:"present"`
+	Model       string `json:"model"`
+	VRAMGB      int    `json:"vram_gb"`
+	CUDAVersion string `json:"cuda_version,omitempty"`
 }
 
 // NodeInfo represents a node in the marketplace.
@@ -38,22 +39,22 @@ type NodeInfo struct {
 	City         string           `json:"city"`
 	UptimeScore  float64          `json:"uptime_score"`
 	PricePerTask int              `json:"price_per_task"` // credits
-	Status       string           `json:"status"`        // online, busy, offline
+	Status       string           `json:"status"`         // online, busy, offline
 	LastSeen     int64            `json:"last_seen"`
 }
 
 // TaskListing represents a task available for execution.
 type TaskListing struct {
-	TaskID       string          `json:"task_id"`
-	Op           string          `json:"op"`
-	Input        json.RawMessage `json:"input"`
-	Credits      int             `json:"credits"`
-	TimeoutSec   int             `json:"timeout_sec"`
-	Status       string          `json:"status"` // pending, assigned, completed, failed
-	AssignedTo   string          `json:"assigned_to,omitempty"`
-	Result       json.RawMessage `json:"result,omitempty"`
-	CreatedAt    int64           `json:"created_at"`
-	CompletedAt  *int64          `json:"completed_at,omitempty"`
+	TaskID      string          `json:"task_id"`
+	Op          string          `json:"op"`
+	Input       json.RawMessage `json:"input"`
+	Credits     int             `json:"credits"`
+	TimeoutSec  int             `json:"timeout_sec"`
+	Status      string          `json:"status"` // pending, assigned, completed, failed
+	AssignedTo  string          `json:"assigned_to,omitempty"`
+	Result      json.RawMessage `json:"result,omitempty"`
+	CreatedAt   int64           `json:"created_at"`
+	CompletedAt *int64          `json:"completed_at,omitempty"`
 }
 
 // Marketplace coordinates task distribution.
@@ -83,18 +84,19 @@ func New(dbPath string, nodeID string) (*Marketplace, error) {
 			last_seen INTEGER
 		);
 		
-		CREATE TABLE IF NOT EXISTS tasks (
-			task_id TEXT PRIMARY KEY,
-			op TEXT NOT NULL,
-			input TEXT NOT NULL,
-			credits INTEGER NOT NULL,
-			timeout_sec INTEGER DEFAULT 30,
-			status TEXT DEFAULT 'pending',
-			assigned_to TEXT,
-			result TEXT,
-			created_at INTEGER,
-			completed_at INTEGER
-		);
+CREATE TABLE IF NOT EXISTS tasks (
+		task_id TEXT PRIMARY KEY,
+		op TEXT NOT NULL,
+		input TEXT NOT NULL,
+		credits INTEGER NOT NULL,
+		timeout_sec INTEGER DEFAULT 30,
+		status TEXT DEFAULT 'pending',
+		assigned_to TEXT,
+		result TEXT,
+		created_at INTEGER,
+		completed_at INTEGER,
+		publisher_id TEXT
+	);
 		
 		CREATE TABLE IF NOT EXISTS bids (
 			id TEXT PRIMARY KEY,
@@ -208,6 +210,105 @@ func (m *Marketplace) PublishTask(task TaskListing) error {
 		task.Status, task.CreatedAt,
 	)
 	return err
+}
+
+// Publisher defines the interface for credit operations needed by PublishWithEscrow.
+type Publisher interface {
+	DeductCredits(nodeID string, amount int) (int, error)
+	RewardCredits(nodeID string, amount int) (int, error)
+}
+
+// PublishWithEscrow creates a new task listing and atomically deducts credits
+// from the publisher as an escrow deposit. Uses BEGIN IMMEDIATE transaction
+// for atomicity.
+func (m *Marketplace) PublishWithEscrow(task TaskListing, publisherID string, ledger Publisher) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Start atomic transaction
+	if _, err := m.db.Exec("BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+
+	// Deduct credits as escrow from publisher's account
+	_, err := ledger.DeductCredits(publisherID, task.Credits)
+	if err != nil {
+		m.db.Exec("ROLLBACK")
+		return fmt.Errorf("escrow deduct: %w", err)
+	}
+
+	// Insert task
+	task.CreatedAt = time.Now().Unix()
+	_, err = m.db.Exec(`
+		INSERT INTO tasks (task_id, op, input, credits, timeout_sec, status, created_at, publisher_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.TaskID, task.Op, string(task.Input), task.Credits, task.TimeoutSec,
+		task.Status, task.CreatedAt, publisherID,
+	)
+	if err != nil {
+		m.db.Exec("ROLLBACK")
+		return fmt.Errorf("insert task: %w", err)
+	}
+
+	// Commit the transaction
+	if _, err := m.db.Exec("COMMIT"); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	return nil
+}
+
+// ReleaseEscrow releases the escrowed credits back to the publisher.
+// Called when a task expires or is cancelled without execution.
+func (m *Marketplace) ReleaseEscrow(taskID, publisherID string, ledger Publisher) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Get task credits to refund
+	var credits int
+	err := m.db.QueryRow("SELECT credits FROM tasks WHERE task_id = ?", taskID).Scan(&credits)
+	if err != nil {
+		return fmt.Errorf("get task credits: %w", err)
+	}
+
+	// Refund to publisher
+	if _, err := ledger.RewardCredits(publisherID, credits); err != nil {
+		return fmt.Errorf("refund: %w", err)
+	}
+
+	// Update task status
+	_, err = m.db.Exec("UPDATE tasks SET status = 'expired_escrow_released' WHERE task_id = ?", taskID)
+	if err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+
+	return nil
+}
+
+// AwardEscrow transfers escrowed credits to the winning node after task completion.
+func (m *Marketplace) AwardEscrow(taskID, winnerNodeID string, ledger Publisher) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Get credits from task
+	var credits int
+	err := m.db.QueryRow("SELECT credits FROM tasks WHERE task_id = ?", taskID).Scan(&credits)
+	if err != nil {
+		return fmt.Errorf("get credits: %w", err)
+	}
+
+	// Award credits to winner (RewardCredits adds to balance)
+	if _, err := ledger.RewardCredits(winnerNodeID, credits); err != nil {
+		return fmt.Errorf("award winner: %w", err)
+	}
+
+	// Mark task completed
+	_, err = m.db.Exec("UPDATE tasks SET status = 'completed_escrow_awarded' WHERE task_id = ?", taskID)
+	if err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+
+	return nil
 }
 
 // AssignTask assigns a task to a node.

@@ -11,12 +11,12 @@ import (
 
 // HardwareInfo describes the node's hardware capabilities.
 type HardwareInfo struct {
-	CPU       CPUInfo    `json:"cpu"`
-	Memory    MemInfo    `json:"memory"`
-	GPU       *GPUInfo   `json:"gpu,omitempty"`
+	CPU       CPUInfo     `json:"cpu"`
+	Memory    MemInfo     `json:"memory"`
+	GPU       *GPUInfo    `json:"gpu,omitempty"`
 	Storage   StorageInfo `json:"storage"`
 	Network   NetworkInfo `json:"network"`
-	Benchmark Benchmark  `json:"benchmark"`
+	Benchmark Benchmark   `json:"benchmark"`
 }
 
 // CPUInfo describes CPU capabilities.
@@ -213,7 +213,7 @@ func detectNVIDIA() *GPUInfo {
 	}
 
 	return &GPUInfo{
-		Present:   true,
+		Present:    true,
 		ModelIndex: name,
 		Vendor:     "NVIDIA",
 		VRAMGB:     vram,

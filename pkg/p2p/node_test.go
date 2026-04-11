@@ -9,9 +9,9 @@ import (
 func TestHelloMsg(t *testing.T) {
 	// Test serialization
 	hello := HelloMsg{
-		Type:     "hello",
-		ID:       "test-node-123",
-		Credits:  500,
+		Type:    "hello",
+		ID:      "test-node-123",
+		Credits: 500,
 	}
 
 	data, err := json.Marshal(hello)

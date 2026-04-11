@@ -1,62 +1,59 @@
-.PHONY: build test clean run run-http install lint help
+.PHONY: build test test-verbose test-coverage clean run run-http run-market install lint fmt help
 
-GOPATH=$(shell pwd)
-GO=~/go-sdk/bin/go
+BINARY=openpool
+CMD=./cmd/integrated
+CGO_ENABLED=1
 
 build:
-	$(GO) build -o openpool ./cmd/node2
+	CGO_ENABLED=$(CGO_ENABLED) go build -o $(BINARY) $(CMD)
 
 test:
-	$(GO) test ./pkg/... -v -cover
+	CGO_ENABLED=$(CGO_ENABLED) go test ./pkg/... -v -cover
 
 test-verbose:
-	$(GO) test ./pkg/... -v -cover -race
+	CGO_ENABLED=$(CGO_ENABLED) go test ./pkg/... -v -cover -race
 
 test-coverage:
-	$(GO) test ./pkg/... -coverprofile=coverage.out
-	$(GO) tool cover -html=coverage.out -o coverage.html
+	CGO_ENABLED=$(CGO_ENABLED) go test ./pkg/... -coverprofile=coverage.out
+	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
 clean:
-	rm -f openpool openpool.db peerstore.json
-	rm -rf coverage.out coverage.html
+	rm -f $(BINARY) openpool.db peerstore.json
+	rm -f coverage.out coverage.html
 
-run:
-	./openpool -http 8080 -port 9000 -wasm wasm/sandbox.wasm -dht
+run: build
+	./$(BINARY) -http 8080 -port 9000 -wasm wasm -dht
 
-run-test:
-	./openpool -test -wasm wasm/sandbox.wasm
+run-test: build
+	./$(BINARY) -test
 
-run-market:
-	./openpool -http 8080 -port 9000 -wasm wasm/sandbox.wasm -market -dht
-
-run-gpu:
-	./openpool -http 8080 -port 9000 -wasm wasm/sandbox.wasm -gpu -dht
+run-market: build
+	./$(BINARY) -http 8080 -port 9000 -wasm wasm -dht
 
 install:
-	$(GO) mod download
-	$(GO) mod tidy
+	go mod download
+	go mod tidy
 
 lint:
-	$(GO) vet ./...
+	go vet ./...
 
 fmt:
-	$(GO) fmt ./...
+	go fmt ./...
 
 check: fmt lint test
 
 help:
 	@echo "OpenPool Makefile Commands:"
-	@echo "  make build       - Build the openpool binary"
-	@echo "  make test        - Run all unit tests"
-	@echo "  make test-verbose - Run tests with race detection"
-	@echo "  make test-coverage - Generate coverage report (coverage.html)"
-	@echo "  make clean        - Remove binaries and temp files"
-	@echo "  make run          - Start node with HTTP API"
-	@echo "  make run-test     - Run built-in test task"
-	@echo "  make run-market   - Start node with marketplace enabled"
-	@echo "  make run-gpu      - Start node with GPU support"
-	@echo "  make install      - Download Go dependencies"
-	@echo "  make lint         - Run go vet"
-	@echo "  make fmt          - Format code"
-	@echo "  make check        - Format, lint, and test"
+	@echo "  make build          - Build the openpool binary"
+	@echo "  make test           - Run all unit tests"
+	@echo "  make test-verbose   - Run tests with race detection"
+	@echo "  make test-coverage  - Generate coverage report (coverage.html)"
+	@echo "  make clean          - Remove binaries and temp files"
+	@echo "  make run            - Start node with HTTP API"
+	@echo "  make run-test       - Run built-in test task"
+	@echo "  make run-market     - Start node with marketplace enabled"
+	@echo "  make install        - Download Go dependencies"
+	@echo "  make lint           - Run go vet"
+	@echo "  make fmt            - Format code"
+	@echo "  make check          - Format, lint, and test"

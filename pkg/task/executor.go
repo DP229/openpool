@@ -19,8 +19,8 @@ type Executor struct {
 func NewExecutor(l *ledger.Ledger, nodeID string) *Executor {
 	return &Executor{
 		registry: Get(),
-		ledger:  l,
-		nodeID:  nodeID,
+		ledger:   l,
+		nodeID:   nodeID,
 	}
 }
 
@@ -43,7 +43,7 @@ func (e *Executor) Execute(ctx context.Context, taskType string, taskID string, 
 			return nil, fmt.Errorf("insufficient credits: have %d, need %d", balance, cost)
 		}
 	}
-	
+
 	// Execute task
 	result, err := e.registry.Execute(ctx, taskType, taskID, e.nodeID, input)
 	if err != nil {
@@ -53,12 +53,12 @@ func (e *Executor) Execute(ctx context.Context, taskType string, taskID string, 
 		}
 		return result, err
 	}
-	
+
 	// Deduct credits on success
 	if e.ledger != nil {
 		e.ledger.AddCredits(e.nodeID, -result.Metrics.CostCredits)
 	}
-	
+
 	return result, nil
 }
 
@@ -75,7 +75,7 @@ func (e *Executor) ExecuteSimple(ctx context.Context, taskType string, taskID st
 func (e *Executor) Stats() map[string]interface{} {
 	return map[string]interface{}{
 		"handlers": e.registry.List(),
-		"node_id": e.nodeID,
+		"node_id":  e.nodeID,
 		"balance":  e.ledger.GetCredits(e.nodeID),
 	}
 }

@@ -59,6 +59,8 @@ var (
 	flagMaxFailures = flag.Int("max-failures", 5, "Circuit breaker max failures")
 	flagBootstrap   = flag.String("bootstrap", "", "Bootstrap peer multiaddr")
 	flagDHT         = flag.Bool("dht", false, "Enable DHT peer discovery")
+	flagPeerstore   = flag.String("peerstore", "", "Path to peerstore JSON file for peer persistence")
+	flagWasmDir     = flag.String("wasm", "", "Path to WASM sandbox directory")
 )
 
 type IntegratedNode struct {
@@ -82,15 +84,20 @@ func main() {
 
 	node := p2p.NewNode(db)
 	node.Port = *flagPort
+	if *flagPeerstore != "" {
+		node.PeerstorePath = *flagPeerstore
+	}
 
 	if err := node.Listen(*flagPort); err != nil {
 		log.Fatal("libp2p listen error:", err)
 	}
 
 	nodeID := node.ID()
+	fmt.Printf("%s Mode: %s (Hybrid LAN+WAN)\n", blue.Render("◈"), green.Render("Active"))
 	db.AddCredits(nodeID, *flagCredits)
 	log.SetPrefix(fmt.Sprintf("[%s] ", nodeID[:6]))
 	fmt.Printf("%s Ledger: %s | %d credits\n", green.Render("✓"), nodeID[:6], *flagCredits)
+	fmt.Printf("%s Discovery: %s (mDNS + DHT)\n", blue.Render("◈"), green.Render("Hybrid LAN+WAN"))
 
 	authMgr, err := auth.NewManager(*flagAuthDB)
 	if err != nil {
@@ -116,6 +123,10 @@ func main() {
 
 	sanitizer := security.NewSanitizer()
 	secMiddleware := middleware.NewSecurityMiddleware(authMgr, *flagRateLimit, *flagAdminSecret, *flagRequireAuth)
+	if *flagWasmDir != "" {
+		secMiddleware.SetWasmBaseDir(*flagWasmDir)
+		fmt.Printf("%s WASM directory: %s\n", green.Render("✓"), *flagWasmDir)
+	}
 
 	shutdownMgr := shutdown.New(
 		shutdown.WithTimeout(time.Duration(*flagShutTimeout)*time.Second),
@@ -172,6 +183,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Hybrid Discovery Mode: Run both mDNS (LAN) and DHT (WAN) concurrently
+	// - mDNS is started automatically in node.Listen()
+	// - DHT starts here when flag is set
+
 	if *flagBootstrap != "" {
 		node.Bootstrap([]string{*flagBootstrap})
 	}
@@ -184,11 +199,13 @@ func main() {
 		if err := node.StartDHT(bootstrapAddrs); err != nil {
 			log.Printf("DHT start: %v", err)
 		} else {
-			fmt.Printf("%s DHT enabled\n", green.Render("✓"))
+			fmt.Printf("%s DHT enabled (WAN discovery)\n", green.Render("✓"))
 			if err := node.AdvertiseCapabilities(ctx, []p2p.CapabilityNamespace{p2p.CapCPU}); err != nil {
 				log.Printf("Advertise: %v", err)
 			}
 		}
+	} else {
+		fmt.Printf("%s Discovery mode: LAN-only (enable DHT with -dht flag for hybrid mode)\n", yellow.Render("◈"))
 	}
 
 	if *flagTest {

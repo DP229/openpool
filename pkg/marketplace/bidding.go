@@ -14,13 +14,13 @@ import (
 
 // Bid represents a node's bid on a task.
 type Bid struct {
-	ID        string    `json:"id"`
-	TaskID    string    `json:"task_id"`
-	NodeID    string    `json:"node_id"`
-	NodeAddr  string    `json:"node_addr"`
-	Credits   int       `json:"credits"`    // Bid price
-	ETAsec    int       `json:"eta_sec"`    // Estimated completion time
-	CreatedAt int64     `json:"created_at"`
+	ID        string `json:"id"`
+	TaskID    string `json:"task_id"`
+	NodeID    string `json:"node_id"`
+	NodeAddr  string `json:"node_addr"`
+	Credits   int    `json:"credits"` // Bid price
+	ETAsec    int    `json:"eta_sec"` // Estimated completion time
+	CreatedAt int64  `json:"created_at"`
 }
 
 // BiddingSystem handles task auctions.
@@ -47,8 +47,14 @@ func NewBiddingSystem(dbPath string, nodeID string) (*BiddingSystem, error) {
 			eta_sec INTEGER NOT NULL,
 			created_at INTEGER NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS bid_status (
+			bid_id TEXT PRIMARY KEY,
+			status TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
 		CREATE INDEX IF NOT EXISTS idx_bids_task ON bids(task_id);
 		CREATE INDEX IF NOT EXISTS idx_bids_node ON bids(node_id);
+		CREATE INDEX IF NOT EXISTS idx_bid_status_bid ON bid_status(bid_id);
 	`)
 	if err != nil {
 		db.Close()
@@ -129,12 +135,18 @@ func (b *BiddingSystem) GetWinningBid(taskID string) (*Bid, error) {
 	return &bids[0], nil
 }
 
-// AcceptBid accepts a bid and marks task as assigned.
+// AcceptBid accepts a bid and marks task as assigned atomically.
+// Uses BEGIN IMMEDIATE transaction to ensure atomicity.
 func (b *BiddingSystem) AcceptBid(bidID string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Get the bid
+	// Start atomic transaction
+	if _, err := b.db.Exec("BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+
+	// Get the bid with task_id
 	var bid Bid
 	err := b.db.QueryRow(`
 		SELECT id, task_id, node_id, node_addr, credits, eta_sec, created_at
@@ -143,12 +155,46 @@ func (b *BiddingSystem) AcceptBid(bidID string) error {
 		&bid.Credits, &bid.ETAsec, &bid.CreatedAt,
 	)
 	if err != nil {
-		return err
+		b.db.Exec("ROLLBACK")
+		return fmt.Errorf("get bid: %w", err)
 	}
 
-	// Update tasks table (we need to add task_id to bids tracking)
-	// Mark other bids as rejected by inserting into a status table
-	// For simplicity, we just return the winning bid info
+	// Mark task as assigned in tasks table
+	_, err = b.db.Exec(`
+		UPDATE tasks SET status = 'assigned', assigned_to = ? WHERE task_id = ?`,
+		bid.NodeID, bid.TaskID,
+	)
+	if err != nil {
+		b.db.Exec("ROLLBACK")
+		return fmt.Errorf("update task status: %w", err)
+	}
+
+	// Update this bid as accepted
+	_, err = b.db.Exec(`
+		INSERT OR REPLACE INTO bid_status (bid_id, status) VALUES (?, 'accepted')`,
+		bidID,
+	)
+	if err != nil {
+		b.db.Exec("ROLLBACK")
+		return fmt.Errorf("mark bid accepted: %w", err)
+	}
+
+	// Mark all other bids for this task as rejected
+	_, err = b.db.Exec(`
+		INSERT OR REPLACE INTO bid_status (bid_id, status)
+		SELECT id, 'rejected' FROM bids WHERE task_id = ? AND id != ?`,
+		bid.TaskID, bidID,
+	)
+	if err != nil {
+		b.db.Exec("ROLLBACK")
+		return fmt.Errorf("mark other bids rejected: %w", err)
+	}
+
+	// Commit
+	if _, err := b.db.Exec("COMMIT"); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
 	return nil
 }
 

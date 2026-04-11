@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ type SecurityMiddleware struct {
 	sanitizer   *security.Sanitizer
 	adminSecret string
 	requireAuth bool
+	wasmBaseDir string
 }
 
 func NewSecurityMiddleware(authManager *auth.Manager, rateLimitRequests int, adminSecret string, requireAuth bool) *SecurityMiddleware {
@@ -30,7 +32,12 @@ func NewSecurityMiddleware(authManager *auth.Manager, rateLimitRequests int, adm
 		sanitizer:   security.NewSanitizer(),
 		adminSecret: adminSecret,
 		requireAuth: requireAuth,
+		wasmBaseDir: "/opt/openpool/wasm",
 	}
+}
+
+func (sm *SecurityMiddleware) SetWasmBaseDir(dir string) {
+	sm.wasmBaseDir = dir
 }
 
 func (sm *SecurityMiddleware) Authenticate(next http.HandlerFunc) http.HandlerFunc {
@@ -113,7 +120,8 @@ func (sm *SecurityMiddleware) RequireAdmin(next http.HandlerFunc) http.HandlerFu
 			return
 		}
 
-		if adminSecret != sm.adminSecret {
+		// IMPORTANT: Use constant-time comparison to prevent timing attacks
+		if subtle.ConstantTimeCompare([]byte(adminSecret), []byte(sm.adminSecret)) != 1 {
 			sm.respondError(w, http.StatusForbidden, "Invalid admin secret")
 			return
 		}
@@ -131,7 +139,7 @@ func (sm *SecurityMiddleware) ValidateTaskInput(next http.HandlerFunc) http.Hand
 		}
 
 		if wasmPath, ok := task["wasm_path"].(string); ok && wasmPath != "" {
-			sanitized, err := sm.sanitizer.ValidateWASMPath("/opt/openpool/wasm", wasmPath)
+			sanitized, err := sm.sanitizer.ValidateWASMPath(sm.wasmBaseDir, wasmPath)
 			if err != nil {
 				sm.respondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid wasm_path: %v", err))
 				return

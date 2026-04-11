@@ -88,7 +88,7 @@ func TestSecurityMiddleware_RateLimit(t *testing.T) {
 	mgr, _ := auth.NewManager(dbPath)
 	defer mgr.Close()
 
-	mw := NewSecurityMiddleware(mgr, 5, "admin-secret", false)
+	mw := NewSecurityMiddleware(mgr, 25, "admin-secret", false)
 
 	handler := mw.RateLimit(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

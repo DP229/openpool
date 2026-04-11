@@ -30,37 +30,37 @@ func (h *FibHandler) Validate(input []byte) error {
 	if len(input) == 0 {
 		return fmt.Errorf("input is required")
 	}
-	
+
 	var n int
 	if err := json.Unmarshal(input, &n); err != nil {
 		return fmt.Errorf("input must be a number: %w", err)
 	}
-	
+
 	if n < 0 {
 		return fmt.Errorf("n must be non-negative")
 	}
-	
+
 	if n > 10000 {
 		return fmt.Errorf("n is too large (max 10000)")
 	}
-	
+
 	return nil
 }
 
 // Execute runs the Fibonacci computation
 func (h *FibHandler) Execute(ctx context.Context, input []byte) (*task.Result, error) {
 	start := time.Now()
-	
+
 	var n int
 	if err := json.Unmarshal(input, &n); err != nil {
 		return nil, err
 	}
-	
+
 	// Calculate Fibonacci
 	result := fibonacci(n)
-	
+
 	elapsed := time.Since(start)
-	
+
 	res := &task.Result{
 		Output: must(json.Marshal(map[string]interface{}{
 			"n":   n,
@@ -82,7 +82,7 @@ func (h *FibHandler) Execute(ctx context.Context, input []byte) (*task.Result, e
 			},
 		},
 	}
-	
+
 	return res, nil
 }
 
@@ -94,15 +94,15 @@ func fibonacci(n int) *big.Int {
 	if n == 1 {
 		return big.NewInt(1)
 	}
-	
+
 	a := big.NewInt(0)
 	b := big.NewInt(1)
-	
+
 	for i := 2; i <= n; i++ {
 		a.Add(a, b)
 		a, b = b, a
 	}
-	
+
 	return b
 }
 
